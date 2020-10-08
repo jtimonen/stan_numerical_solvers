@@ -1,7 +1,10 @@
 ---
 title: "Fixing Approximations"
-date: "10/6/2020"
-output: html_document
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+bibliography: refs.bib
 ---
 
 ```{r setup, include=FALSE}
@@ -14,17 +17,18 @@ library(cmdstanr)
 
 Assume we have a Bayesian model:
 
-$p(x | \theta) p(\theta)$
+\begin{equation}
+p(\theta \mid x) \propto p(x \mid \theta) p(\theta)
+\end{equation}
 
 Try as we might to make this model go fast, sometimes it just doesn't. In fact,
-often it doesn't.
+often it doesn't. There are numerous reasons this might happen:
 
-There are numerous reasons this might happen:
-1. Difficult to sample posterior geometry
-2. Bug in the code
-3. Model does not fit the data well
-4. Lots of data
-5. etc...
+  1. Difficult to sample posterior geometry
+  2. Bug in the code
+  3. Model does not fit the data well
+  4. Lots of data
+  5. etc...
 
 The particular situation we want to discuss here is one where you are happy
 with your model but there are some difficult calculations you want to
@@ -40,9 +44,9 @@ I know my approximation is good enough?
 
 The goal of this case study is to figure out if your approximation is good
 enough, and, if possible use importance sampling to correct for any bias in
-the results. This is using techniques from the paper "Yes, But Did it Work?" ([arXiv:1802.02538](https://arxiv.org/abs/1802.02538)), "Pareto Smoothed
-Importance Sampling" ([arXiv:1507.02646](https://arxiv.org/abs/1507.02646)),
-and the `loo` software package (https://mc-stan.org/loo).
+the results. This is using techniques from the papers
+[@yao2018], [@vehtari2019], and
+the `loo` software package (https://mc-stan.org/loo).
 
 ## 1D Diffusion Example
 
@@ -159,3 +163,7 @@ fit = model$sample(data = list(N = length(x),
 
 
 ## Correcting the Approximation
+
+
+## References
+
