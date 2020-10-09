@@ -1,13 +1,16 @@
-                                                                                                                                           # History files
-.Rhistory
-.Rapp.history
+*.Rhistory
+*.Rapp.history
 *.RData
 *.DS_Store
 *.Rhistory
+*.Renviron
+*.o
 
-*_cache/
-/cache/
 *.html
 
-.Renviron
+*_files/
+*_cache/
+
+
+
 

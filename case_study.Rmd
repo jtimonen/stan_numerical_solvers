@@ -1,12 +1,13 @@
 ---
 title: "Fixing Approximations"
 date: "`r Sys.Date()`"
+author: "Ben Bales and Juho Timonen" 
 output: 
   html_document:
     toc: true
-    theme: united
+    theme: yeti
     highlight: textmate
-bibliography: refs.bib
+bibliography: references.bib
 ---
 
 ```{r setup, include=FALSE}
@@ -17,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 require(rstan)
 ```
 
-## Fixing Approximations
+## 1. Introduction
 
 Assume we have a Bayesian model:
 
@@ -52,20 +53,20 @@ the results. This is using techniques from the papers
 [@yao2018], [@vehtari2019], and
 the `loo` software package (https://mc-stan.org/loo).
 
-## 1D Diffusion Example
+## 2. 1D Diffusion Example
 
-First, let's start with a problem where Stan is slow.
+### 2.1  Problem
 
-Let's pretend that we are modeling heat diffusion on a rod $x \in [0, L]$ as a partial differential equation
+First, let's start with a problem where Stan is slow. Let's pretend that we are modeling heat diffusion on a rod $x \in [0, L]$ as a partial differential equation
 \begin{equation}
-\frac{\partial u}{\partial t} = D \cdot \frac{\partial^2 u}{\partial x^2}
+\frac{\partial u}{\partial t} = \kappa \cdot \frac{\partial^2 u}{\partial x^2}
 \end{equation}
 with boundary conditions
 $$
 u(t, x = 0) = 0 \\
 u(t, x = L) = 1
 $$
-and the initial heat distribution
+and initial heat distribution
 \begin{equation}
 u(t = 0, x) = 
 \begin{cases}
@@ -73,39 +74,51 @@ u(t = 0, x) =
 1 & \text{ if } \hspace{0.5cm} \frac{L}{2} < x \leq 1
 \end{cases}
 \end{equation}
-The parameter $D$ is unknown. Let's pretend that we have measured the concentration $u(t,x)$ of this system at time $t = T$ and try to estimate the diffusion constant $D$.
+The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate it from noisy measurements of the concentration $u(t,x)$ at time $t = T$.
 
-Let's assume $D_{true} = 0.5$. This is what we are going to try to estimate.
-We can easily discretize this using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines) and generate some sample
-data in R:
+### 2.2 Simulating data
+We generate test data using $\kappa_{true} = 0.25$. We can easily discretize the system using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines) and generate some sample data in R:
 
-```{r}
-L = 1
-Tf = 1
-D = 0.25
-dx = 1e-2
-dt = 1e-4
-
-x = seq(0, 1, by = dx)
-u_init = x > L / 2.0
-
-u = u_init
-for(t in seq(0, Tf, by = dt)) {
-  u_new = u
-  
-  for(i in 2:(length(u) - 1)) {
-    u_new[i] = dt * (u[i + 1] - 2 * u[i] + u[i - 1]) / (2 * dx) + u[i]
+```{r sim_functions}
+# Function to solve u(t,x)
+solve_u <- function(u_init, T_end, dt, dx) {
+  u <- u_init
+  for (t in seq(0, T_end, by = dt)) {
+    u_new <- u
+    for (i in 2:(length(u) - 1)) {
+      u_new[i] <- dt * (u[i + 1] - 2 * u[i] + u[i - 1]) / (2 * dx) + u[i]
+    }
+    u <- u_new
   }
-  
-  u = u_new
+  return(u)
 }
 
-my_red <- "#fe8a2f"
-plot(x, u_init, type = 'l', main = 'Heat distribution on [0,L]', ylab = 'u(t,x)', xaxt = "n")
-lines(x, u, col = my_red)
-legend(0.8, 0.4, legend = c("t = 0", "t = T"), col = c("black", my_red),
-       lty = c(1,1))
-axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
+# Function to plot the solution
+plot_u <- function(x, u_init, u_end, col1 = "gray30", col2 = "#198bff") {
+  lwd <- 2
+  plot(x, u_init, type = 'l', col = col1, main = 'Heat distribution on [0,L]', ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
+  lines(x, u_end, col = col2, lwd = lwd)
+  legend(0.8, 0.4, legend = c("t = 0", "t = T"), col = c(col1, col2), lty = c(1,1), lwd = c(lwd, lwd))
+  axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
+}
+```
+
+
+```{r simulate, fig.width = 6.5, fig.height = 4.5}
+# Setup
+L <- 1        # rod length
+T_end <- 1    # time interval length
+Kappa <- 0.25 # true value of kappa
+dx <- 1e-2    # discretization step in x
+dt <- 1e-4    # discretization step in t
+
+# Define initial heat distribution u(t=0, x)
+x_grid <- seq(0, 1, by = dx)
+u_init <- x_grid > (0.5 * L)
+
+# Solve u(t=T, x) and plot
+u_end <- solve_u(u_init, T_end, dt, dx)
+plot_u(x_grid, u_init, u_end)
 ```
 
 Now, if you're familiar with diffusion equations you might say, 'Oh, you
@@ -124,7 +137,7 @@ But how should we check this in a model in Stan? The error in the solution from
 using an approximation is important, but really the error in the posterior is
 what matters. That leads to our first question
 
-## Is the Approximation Good Enough?
+### 2.3 Is the Approximation Good Enough?
 
 Assume we have a distribution $p_{true}(\theta)$ and $p_{approx}(\theta)$.
 
@@ -156,14 +169,14 @@ In general, we can diagnose if the expectations will work by examing the
 distribution of the importance weights by using the Pareto Smooth Importance
 Sampling diagnostic. But first, let's write a Stan model
 
-## 1D Diffusion in Stan
+### 2.4 1D Diffusion in Stan
 
 We define stan model.
 ```{r model}
 model <- stan_model("diffusion.stan")
-stan_data <- list(N = length(x),
-                  x = x,
-                  y = rnorm(u, 0.1),
+stan_data <- list(N = length(x_grid),
+                  x = x_grid,
+                  y = rnorm(u_end, 0.1),
                   L = L,
                   Tf = 0.1,
                   dt = 1e-3,
@@ -171,7 +184,7 @@ stan_data <- list(N = length(x),
 ```
 Hello, yes now we fit.
 
-```{r fit}
+```{r fit, cache=TRUE}
 fit <- sampling(model,
                 data = stan_data,
                 iter = 1000,
@@ -180,7 +193,7 @@ fit <- sampling(model,
 print(fit)
 ```
 
-## Correcting the Approximation
+### 2.5 Correcting the Approximation
 Heck.
 
 ## Computation environment
