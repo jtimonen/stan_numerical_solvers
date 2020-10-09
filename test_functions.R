@@ -1,3 +1,5 @@
+require(pracma)
+
 #' Forward Euler method
 #' 
 #' @param u_init initial state u(0, x)
@@ -25,25 +27,6 @@ solve_fe <- function(u_init, dt, dx, Nt, Kappa) {
   return(U)
 }
 
-#' Create the tridiagonal matrix A
-#' 
-#' @param Nx number of discretization points in x
-#' @param K dimensionless diffusion constant
-#' @examples
-create_A <- function(Nx, K) {
-  A <- matrix(0, Nx, Nx)
-  for (i in 2:(Nx - 1)) {
-    A[i, i + 1] <- -K
-    A[i, i - 1] <- -K
-    A[i, i]     <- 1 + 2*K
-  }
-  A[1, 1]       <- 1.0 + K
-  A[Nx, Nx]     <- 1.0 + K
-  A[1, 2]       <- -K
-  A[Nx, Nx - 1] <- -K
-  return(A)
-}
-
 #' Backward Euler method
 #' 
 #' @param u_init initial state u(0, x)
@@ -58,10 +41,17 @@ solve_be <- function(u_init, dt, dx, Nt, Kappa) {
   K <- Kappa * dt / (dx**2)
   msg <- paste0("K = ", K, "\n")
   cat(msg)
-  A <- create_A(Nx, K)
+  
+  # Create the diagonal, and upper and lower secondary diagonals of A
+  A_diag <- rep(1.0 + 2.0*K, Nx)
+  A_diag[1] <- 1.0 + K
+  A_diag[Nx] <- 1.0 + K
+  A_lower <- rep(-K, Nx - 1)
+  A_upper <- A_lower
+  
   for (n in seq_len(Nt)) {
     u_n <- U[n,]
-    u_np1 <- solve(A, u_n)
+    u_np1 <- pracma::trisolve(A_diag, A_upper, A_lower, u_n)
     U[n + 1,] <- u_np1
     U[n + 1, 1] <- 0
     U[n + 1, Nx] <- 1
@@ -74,13 +64,14 @@ solve_be <- function(u_init, dt, dx, Nt, Kappa) {
 #' @param x grid in x
 #' @param U matrix of solutions
 #' @param T_max max time
-plot_u <- function(x, U, T_max) {
+#' @param main main title
+plot_u <- function(x, U, T_max, main) {
   lwd <- 2
   col1 <- "gray30"
   col2 <- "firebrick3"
   col3 <- "orange"
   leg <- c("t = 0", paste("t =", T_max/4), paste("t =", T_max))
-  plot(x, U[1,], col = col1, type = 'l', main = 'Solution of u(t,x)',
+  plot(x, U[1,], col = col1, type = 'l', main = main,
        ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
   L <- nrow(U)
   idx <- round(L/4)
@@ -88,7 +79,7 @@ plot_u <- function(x, U, T_max) {
   lines(x, U[L,], lwd = lwd, col = col3) 
   legend(0.7, 0.4, legend = leg, 
          col = c(col1, col2, col3), lty = c(1,1,1), lwd = c(lwd, lwd, lwd))
-  #axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
+  axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
 }
 
 

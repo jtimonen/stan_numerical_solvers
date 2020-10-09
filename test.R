@@ -5,8 +5,8 @@ source('test_functions.R')
 # Setup
 L <- 1
 T_max <- 0.2  # time interval length
-Kappa <- 0.1  # true value of kappa
-dx <- 1e-2    # discretization step in x
+Kappa <- 0.2  # true value of kappa
+dx <- 1e-3    # discretization step in x
 dt <- 1e-4    # discretization step in t
 
 # Define initial heat distribution u(t=0, x)
@@ -16,4 +16,5 @@ u_init <- as.numeric(x_grid > (0.5 * L))
 # Solve u(t=T, x) and plot
 Nt <- T_max/dt
 U <- solve_be(u_init, dt, dx, Nt, Kappa)
-plot_u(x_grid, U, T_max)
+main <- paste0('Solution with Kappa=', Kappa, ', dx=', dx, ", dt=", dt)
+plot_u(x_grid, U, T_max, main)
