@@ -18,7 +18,7 @@ alpha = D * dt / dx^2
 r1 = solve(diag(N) - alpha * A, b0)
 
 # 'rl' is my placeholder name for the offdiagonal elements of the matrix
-# alpha * A
+# alpha * A‰
 rl = -alpha
 
 b = b0

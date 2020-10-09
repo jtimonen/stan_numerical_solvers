@@ -79,6 +79,8 @@ u(t = 0, x) =
 \end{equation}
 The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate it from noisy measurements of the concentration $u(t,x)$ at time $t = T$.
 
+### 2.2 Numerical solution
+
 ### 2.2 Simulating data
 We generate test data using $\kappa_{true} = 0.25$. We can easily discretize the system using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines) and generate some sample data in R:
 
@@ -176,24 +178,24 @@ Sampling diagnostic. But first, let's write a Stan model
 
 We define stan model.
 ```{r model}
-model <- stan_model("diffusion.stan")
-stan_data <- list(N = length(x_grid),
-                  x = x_grid,
-                  y = rnorm(u_end, 0.1),
-                  L = L,
-                  Tf = 0.1,
-                  dt = 1e-3,
-                  sigma = 0.1)
+#model <- stan_model("diffusion.stan")
+#stan_data <- list(N = length(x_grid),
+#                  x = x_grid,
+#                  y = rnorm(u_end, 0.1),
+#                  L = L,
+#                  Tf = 0.1,
+#                  dt = 1e-3,
+#                  sigma = 0.1)
 ```
 Hello, yes now we fit.
 
 ```{r fit, cache=TRUE}
-fit <- sampling(model,
-                data = stan_data,
-                iter = 1000,
-                chains = 4,
-                cores = 4)
-print(fit)
+#fit <- sampling(model,
+#                data = stan_data,
+#                iter = 1000,
+#                chains = 4,
+#                cores = 4)
+#print(fit)
 ```
 
 ### 2.5 Correcting the Approximation
