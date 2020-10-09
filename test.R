@@ -11,8 +11,9 @@ dt <- 1e-4    # discretization step in t
 
 # Define initial heat distribution u(t=0, x)
 x_grid <- seq(0, 1, by = dx)
-u_init <- x_grid > (0.5 * L)
+u_init <- as.numeric(x_grid > (0.5 * L))
 
 # Solve u(t=T, x) and plot
-u_end <- solve_u(u_init, T_end, dt, dx)
-plot_u(x_grid, u_init, u_end)
+Nt <- L/dt
+U <- solve_fe(u_init, dt, dx, Nt, Kappa)
+#plot_u(x_grid, U)

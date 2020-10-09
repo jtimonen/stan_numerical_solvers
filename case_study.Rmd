@@ -1,8 +1,8 @@
 ---
-title: "Fixing Approximations"
+title: "Using numerical solvers"
 date: "`r Sys.Date()`"
-author: "Ben Bales and Juho Timonen" 
-output: 
+author: "Juho Timonen and Ben Bales" 
+output:
   html_document:
     toc: true
     theme: yeti
@@ -20,36 +20,39 @@ require(rstan)
 
 ## 1. Introduction
 
-Assume we have a Bayesian model:
-
+Assume we have a Bayesian model
 \begin{equation}
-p(\theta \mid x) \propto p(x \mid \theta) p(\theta)
+p(\theta \mid \mathcal{D}) \propto p(\mathcal{D} \mid \theta) p(\theta)
 \end{equation}
-
-Try as we might to make this model go fast, sometimes it just doesn't. In fact,
-often it doesn't. There are numerous reasons this might happen:
+with data $\mathcal{D}$ and parameters $\theta$. Try as we might to make fitting
+this model go fast in Stan, sometimes it just doesn't. There are numerous
+reasons this might happen:
 
   1. Difficult to sample posterior geometry
-  2. Bug in the code
-  3. Model does not fit the data well
-  4. Lots of data
-  5. etc...
+  2. Inefficiently written Stan code
+  3. Lots of data
+  4. Use of heavy numerical methods to perform some calculations
 
-The particular situation we want to discuss here is one where you are happy
-with your model but there are some difficult calculations you want to
-approximate for performance reasons.
+The particular situation we want to discuss here is (4.), meaning you are happy
+with your model, but it involves some implicitly defined functions or variables
+which need to be solved using heavy numerical computations.
 
-This comes up relatively often when dealing with integrals and differential
-equations in Stan. Stan comes with a couple common ODE integrators and one
-quadrature scheme in the language itself, but if those prepackaged solutions
-do not work, something else must be done. Usually what happens is an approximate
-quadrature or integrator gets used that is much faster or more stable than the
-reference implementation in Stan. The question immediately becomes, how do
-I know my approximation is good enough?
+The above situation comes up relatively often when dealing with integrals and differential equations in Stan. Stan comes with a couple common ODE integrators (`integrate_ode_rk45`, `integrate_ode_bdf`, `integrate_ode_adams`) and one quadrature scheme (`integrate_1d`) in the language itself. These involve
+error estimation and require defining a tolerance for the error. In general,
+setting a lower tolerance means more accuracy but also more computation time.
 
-The goal of this case study is to figure out if your approximation is good
-enough, and, if possible use importance sampling to correct for any bias in
-the results. This is using techniques from the papers
+If those prepackaged solutions with default tolerances are too slow, something
+else must be done. The possibilities are to
+
+  1. use the built-in methods with less strict tolerances 
+  2. write a simpler custom quadrature or integrator by hand in the Stan
+    model code.
+
+These have in many cases been faster or more stable than the reference implementation in Stan. However, the question immediately becomes, how do I
+know my method is accurate enough?
+
+The goal of this case study is to figure out if your numerical method is biasing
+the posterior inference of $\theta$, and, if possible use importance sampling to correct model predictions. This is using techniques from the papers
 [@yao2018], [@vehtari2019], and
 the `loo` software package (https://mc-stan.org/loo).
 

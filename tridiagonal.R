@@ -17,7 +17,8 @@ alpha = D * dt / dx^2
 # Do the solve with a dense matrix
 r1 = solve(diag(N) - alpha * A, b0)
 
-# 'rl' is my placeholder name for the offdiagonal elements of the matrix alpha * A
+# 'rl' is my placeholder name for the offdiagonal elements of the matrix
+# alpha * A
 rl = -alpha
 
 b = b0

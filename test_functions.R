@@ -1,24 +1,38 @@
-# Function to solve u(t,x)
-solve_u <- function(u_init, T_end, dt, dx) {
-  u <- u_init
-  for (t in seq(0, T_end, by = dt)) {
-    u_new <- u
-    for (i in 2:(length(u) - 1)) {
-      f <- (u[i + 1] - 2 * u[i] + u[i - 1]) / (2 * dx)
-      u_new[i] <-  u[i] + dt * f
+#' Forward Euler method
+#' 
+#' @param u_init initial state u(0, x)
+#' @param dt discretization step in t
+#' @param dx discretization step in x
+#' @param Nt number of time steps to take
+#' @param Kappa diffusion constant
+solve_fe <- function(u_init, dt, dx, Nt, Kappa) {
+  Nx <- length(u_init)
+  U <- matrix(0, Nt + 1, Nx)
+  U[1, ] <- u_init
+  f <- Kappa * dt / (dx**2)
+  for (n in seq_len(Nt)) {
+    u_n <- U[n,]
+    u_np1 <- u_n
+    for (i in 2:(Nx - 1)) {
+      u_np1[i] <-  u_n[i] + f * (u_n[i + 1] - 2 * u_n[i] + u_n[i - 1]) 
     }
-    u <- u_new
+    U[n + 1,] <- u_np1
+    U[n + 1, 0] <- 0
+    U[n + 1, Nx] <- 1
   }
-  return(u)
+  return(U)
 }
 
 # Function to plot the solution
-plot_u <- function(x, u_init, u_end, col1 = "gray30", col2 = "#198bff") {
+plot_u <- function(x, U) {
   lwd <- 2
-  plot(x, u_init, type = 'l', col = col1, main = 'Heat distribution on [0,L]',
+  plot(x, U[1,], type = 'l', main = 'Solution of u(t,x)',
        ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
-  lines(x, u_end, col = col2, lwd = lwd)
-  legend(0.8, 0.4, legend = c("t = 0", "t = T"), col = c(col1, col2),
-         lty = c(1,1), lwd = c(lwd, lwd))
+  L <- nrow(U)
+  for (n in 2:L) {
+    lines(x, U[n,], lwd = lwd) 
+  }
+  #legend(0.8, 0.4, legend = c("t = 0", "t = T"), col = c(col1, col2),
+  #       lty = c(1,1), lwd = c(lwd, lwd))
   axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
 }
