@@ -9,7 +9,7 @@ data {
 }
 
 transformed data {
-  real dx = x[2] - x[1]; 
+  real dx = x[2] - x[1];
 }
 
 parameters {
