@@ -4,9 +4,9 @@ source('test_functions.R')
 
 # Setup
 L <- 1
-T_max <- 0.2  # time interval length
+T_max <- 0.1  # time interval length
 Kappa <- 0.2  # true value of kappa
-dx <- 1e-3    # discretization step in x
+dx <- 1e-2    # discretization step in x
 dt <- 1e-4    # discretization step in t
 
 # Define initial heat distribution u(t=0, x)

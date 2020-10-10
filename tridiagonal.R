@@ -24,7 +24,7 @@ rl = -alpha
 b = b0
 d = 1 - diag(alpha * A)
 for (i in 2:N) {
-  b[i] = b[i] - (rl / d[i - 1]) * b[i - 1]
+  b[i] = b[i] - b[i - 1] / d[i - 1] * rl
   d[i] = d[i] - rl^2 / d[i - 1]
 }
 

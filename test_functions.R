@@ -1,4 +1,51 @@
-require(pracma)
+#' Solve a tridiagonal linear system Ax = d
+#'
+#' @param a lower diagonal of A
+#' @param b diagonal of matrix A
+#' @param c upper diagonal of A
+#' @param d right-hand side of the system
+solve_tridiag <- function(a, b, c, d) {
+  n <- length(b)
+  x <- rep(0, n)
+  
+  # Forward sweep
+  for (i in 2:n) {
+    w <- a[i - 1] / b[i - 1]
+    b[i] <- b[i] - w*c[i - 1]
+    d[i] <- d[i] - w*d[i - 1]
+  }
+  
+  # Back substitution
+  x[n] <- d[n]/b[n]
+  for (i in (n - 1):1) {
+    x[i] <- (d[i] - c[i]*x[i + 1]) / b[i]
+  }
+  return(x)
+}
+
+#' Solve a symmetric tridiagonal linear system Ax = d
+#'
+#' @param a upper/lower diagonal of A
+#' @param b diagonal of matrix A
+#' @param d right-hand side of the system
+solve_tridiag_sym <- function(a, b, d) {
+  n <- length(b)
+  x <- rep(0, n)
+  
+  # Forward sweep
+  for (i in 2:n) {
+    w <- a[i - 1] / b[i - 1]
+    b[i] <- b[i] - w*a[i - 1]
+    d[i] <- d[i] - w*d[i - 1]
+  }
+  
+  # Back substitution
+  x[n] <- d[n]/b[n]
+  for (i in (n - 1):1) {
+    x[i] <- (d[i] - a[i]*x[i + 1]) / b[i]
+  }
+  return(x)
+}
 
 #' Forward Euler method
 #' 
@@ -46,12 +93,12 @@ solve_be <- function(u_init, dt, dx, Nt, Kappa) {
   A_diag <- rep(1.0 + 2.0*K, Nx)
   A_diag[1] <- 1.0 + K
   A_diag[Nx] <- 1.0 + K
-  A_lower <- rep(-K, Nx - 1)
-  A_upper <- A_lower
+  A_band <- rep(-K, Nx - 1)
   
   for (n in seq_len(Nt)) {
     u_n <- U[n,]
-    u_np1 <- pracma::trisolve(A_diag, A_upper, A_lower, u_n)
+    #u_np1 <- solve_tridiag(A_band, A_diag, A_band, u_n)
+    u_np1 <- solve_tridiag_sym(A_band, A_diag, u_n)
     U[n + 1,] <- u_np1
     U[n + 1, 1] <- 0
     U[n + 1, Nx] <- 1
