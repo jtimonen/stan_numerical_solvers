@@ -47,32 +47,6 @@ solve_tridiag_sym <- function(a, b, d) {
   return(x)
 }
 
-#' Forward Euler method
-#' 
-#' @param u_init initial state u(0, x)
-#' @param dt discretization step in t
-#' @param dx discretization step in x
-#' @param Nt number of time steps to take
-#' @param Kappa diffusion constant
-solve_fe <- function(u_init, dt, dx, Nt, Kappa) {
-  Nx <- length(u_init)
-  U <- matrix(0, Nt + 1, Nx)
-  U[1, ] <- u_init
-  K <- Kappa * dt / (dx**2)
-  msg <- paste0("K = ", K, "\n")
-  cat(msg)
-  for (n in seq_len(Nt)) {
-    u_n <- U[n,]
-    u_np1 <- u_n
-    for (i in 2:(Nx - 1)) {
-      u_np1[i] <-  u_n[i] + K * (u_n[i + 1] - 2 * u_n[i] + u_n[i - 1]) 
-    }
-    U[n + 1,] <- u_np1
-    U[n + 1, 0] <- 0
-    U[n + 1, Nx] <- 1
-  }
-  return(U)
-}
 
 #' Backward Euler method
 #' 
@@ -80,20 +54,20 @@ solve_fe <- function(u_init, dt, dx, Nt, Kappa) {
 #' @param dt discretization step in t
 #' @param dx discretization step in x
 #' @param Nt number of time steps to take
-#' @param Kappa diffusion constant
-solve_be <- function(u_init, dt, dx, Nt, Kappa) {
+#' @param K diffusion constant
+solve_be <- function(u_init, dt, dx, Nt, K) {
   Nx <- length(u_init)
   U <- matrix(0, Nt + 1, Nx)
   U[1, ] <- u_init
-  K <- Kappa * dt / (dx**2)
-  msg <- paste0("K = ", K, "\n")
+  K_star <- K * dt / (dx**2)
+  msg <- paste0("K_star = ", K_star, "\n")
   cat(msg)
   
   # Create the diagonal, and upper and lower secondary diagonals of A
   A_diag <- rep(1.0 + 2.0*K, Nx)
-  A_diag[1] <- 1.0 + K
-  A_diag[Nx] <- 1.0 + K
-  A_band <- rep(-K, Nx - 1)
+  A_diag[1] <- 1.0 + K_star
+  A_diag[Nx] <- 1.0 + K_star
+  A_band <- rep(-K_star, Nx - 1)
   
   for (n in seq_len(Nt)) {
     u_n <- U[n,]
@@ -128,7 +102,6 @@ plot_u <- function(x, U, T_max, main) {
          col = c(col1, col2, col3), lty = c(1,1,1), lwd = c(lwd, lwd, lwd))
   axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
 }
-
 
 #' Function to plot the development of the solution
 #' 

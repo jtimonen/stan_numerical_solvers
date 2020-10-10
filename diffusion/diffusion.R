@@ -1,4 +1,4 @@
-source('test_functions.R')
+source('functions.R')
 
 # Setup
 L <- 1

@@ -1,18 +1,10 @@
 require(rstan)
-
-# Create a stan model containing only the functions
-two_spaces <- "  " 
-f_list <- readLines('functions.stan')
-functions <- paste(unlist(f_list), collapse = paste0("\n", two_spaces))
-functions <- paste0(two_spaces, functions)
-model_code <- paste(c("functions {", functions, "}\n"), collapse = "\n")
-model <- rstan::stan_model(model_code = model_code)
+source('functions.R')
+source('stan_exposer.R')
 
 # Expose stan functions to R
-rstan::expose_stan_functions(model)
-
-# Load solve_tridiag for comparison
-source('functions.R')
+m <- stan_exposer()
+rstan::expose_stan_functions(m)
 
 # Test data
 a <- c(1,1,1)

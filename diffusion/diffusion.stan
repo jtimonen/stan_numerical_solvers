@@ -1,15 +1,15 @@
 functions {
-#include functions.stan
+#include tridiag.stan
+#include be.stan
 }
 
 data {
   int N;
   vector[N] x;
-  real L;
-  real Tf;
+  vector[N] y;
+  real T;
   real dt;
   real sigma;
-  vector[N] y;
 }
 
 transformed data {
@@ -17,34 +17,27 @@ transformed data {
 }
 
 parameters {
-  real<lower = 0.0> D;
+  real<lower = 0.0> K; // diffusion constant
 }
 
 transformed parameters {
   vector[N] u;
   real t = 0.0;
   
+  // Initialize u(t=0,x)
   for(n in 1:N) {
-    if(x[n] > L / 2.0) {
+    if(x[n] > 0.5) {
       u[n] = 1.0;
     } else {
       u[n] = 0.0;
     }
   }
-
-  while(t < Tf) {
-    vector[N] u_new = u;
   
-    for(n in 2:(N - 1)) {
-      u_new[n] = dt * (u[n + 1] - 2 * u[n] + u[n - 1]) / (2 * dx) + u[n];
-    }
-  
-    u = u_new;
-    t = t + dt;
-  }
+  // Solve u(t=T,x) using backward Euler method
+  u = stan_be(u, dt, dx, T, K);
 }
 
 model {
-  D ~ normal(0, 1);
+  K ~ normal(0, 1);
   y ~ normal(u, sigma);
 }
