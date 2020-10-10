@@ -1,5 +1,3 @@
-require(rstan)
-
 source('test_functions.R')
 
 # Setup
