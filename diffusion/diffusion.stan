@@ -1,6 +1,5 @@
 functions {
-#include tridiag.stan
-#include be.stan
+#include be_tridiag.stan
 }
 
 data {
@@ -14,6 +13,7 @@ data {
 
 transformed data {
   real dx = x[2] - x[1];
+  vector[N] log_y = log(y);
 }
 
 parameters {
@@ -38,6 +38,6 @@ transformed parameters {
 }
 
 model {
-  K ~ normal(0, 1);
-  y ~ normal(u, sigma);
+  K ~ normal(0, 0.5);
+  log_y ~ normal(u, sigma);
 }
