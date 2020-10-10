@@ -7,7 +7,7 @@ m <- stan_exposer()
 rstan::expose_stan_functions(m)
 
 # Setup a test case
-L <- 1
+L     <- 1
 T_max <- 0.2     # time interval length
 K     <- 0.1     # true value of K
 dx    <- 1e-2    # discretization step in x
@@ -19,7 +19,7 @@ u_init <- as.numeric(x_grid > (0.5 * L))
 
 # Solve u using the stan and R functions
 Nt <- T_max/dt
-U <- solve_be(u_init, dt, dx, Nt, K)
+U <- be(u_init, dt, dx, Nt, K)
 
 u1 <- U[Nt,]
 u2 <- stan_be(u_init, dt, dx, T_max, K)

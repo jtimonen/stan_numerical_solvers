@@ -55,7 +55,7 @@ solve_tridiag_sym <- function(a, b, d) {
 #' @param dx discretization step in x
 #' @param Nt number of time steps to take
 #' @param K diffusion constant
-solve_be <- function(u_init, dt, dx, Nt, K) {
+be <- function(u_init, dt, dx, Nt, K) {
   Nx <- length(u_init)
   U <- matrix(0, Nt + 1, Nx)
   U[1, ] <- u_init
@@ -80,26 +80,24 @@ solve_be <- function(u_init, dt, dx, Nt, K) {
   return(U)
 }
 
-#' Function to plot the solution
+#' Function to plot the solution(s)
 #' 
 #' @param x grid in x
-#' @param U matrix of solutions
-#' @param T_max max time
+#' @param U matrix where each row is one solution (R rows)
+#' @param t vector where each value is the correspondinng time (length R)
+#' @param cols vector of colors (length R)
 #' @param main main title
-plot_u <- function(x, U, T_max, main) {
+plot_u <- function(x, U, t, cols, main) {
   lwd <- 2
-  col1 <- "gray30"
-  col2 <- "firebrick3"
-  col3 <- "orange"
-  leg <- c("t = 0", paste("t =", T_max/4), paste("t =", T_max))
-  plot(x, U[1,], col = col1, type = 'l', main = main,
+  leg <- paste0("t = ", t)
+  plot(x, U[1,], col = cols[1], type = 'l', main = main,
        ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
-  L <- nrow(U)
-  idx <- round(L/4)
-  lines(x, U[idx,], lwd = lwd, col = col2)
-  lines(x, U[L,], lwd = lwd, col = col3) 
-  legend(0.7, 0.4, legend = leg, 
-         col = c(col1, col2, col3), lty = c(1,1,1), lwd = c(lwd, lwd, lwd))
+  R <- nrow(U)
+  for (r in 2:R) {
+    lines(x, U[r,], col = cols[r], lwd = lwd)
+  }
+  legend(0.7, 0.4, legend = leg,
+         col = cols, lty = rep(1, R), lwd = rep(lwd, R))
   axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
 }
 

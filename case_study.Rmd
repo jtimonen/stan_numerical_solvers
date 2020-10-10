@@ -14,7 +14,7 @@ bibliography: references.bib
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r load, include=FALSE}
+```{r load, message=FALSE}
 require(rstan)
 ```
 
@@ -81,62 +81,58 @@ The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate 
 
 ### 2.2 Numerical solution
 
-### 2.2 Simulating data
-We generate test data using $\kappa_{true} = 0.25$. We can easily discretize the system using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines) and generate some sample data in R:
-
-```{r sim_functions}
-# Function to solve u(t,x)
-solve_u <- function(u_init, T_end, dt, dx) {
-  u <- u_init
-  for (t in seq(0, T_end, by = dt)) {
-    u_new <- u
-    for (i in 2:(length(u) - 1)) {
-      u_new[i] <- dt * (u[i + 1] - 2 * u[i] + u[i - 1]) / (2 * dx) + u[i]
-    }
-    u <- u_new
-  }
-  return(u)
-}
-
-# Function to plot the solution
-plot_u <- function(x, u_init, u_end, col1 = "gray30", col2 = "#198bff") {
-  lwd <- 2
-  plot(x, u_init, type = 'l', col = col1, main = 'Heat distribution on [0,L]', ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
-  lines(x, u_end, col = col2, lwd = lwd)
-  legend(0.8, 0.4, legend = c("t = 0", "t = T"), col = c(col1, col2), lty = c(1,1), lwd = c(lwd, lwd))
-  axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
-}
+We load some functions
+```{r expose, results=FALSE}
+source('diffusion/functions.R')
+source('diffusion/stan_exposer.R')
+m <- stan_exposer('diffusion')
+rstan::expose_stan_functions(m)
 ```
 
+```{r print_stan}
+print(m)
+```
+We demonstrate solving the system when $K_{true} = 0.1$. We can easily discretize the system using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines). We use the backward Euler method to solve $u(t,x)$.
+```{r diffusion, fig.width = 6.75, fig.height = 5}
+# Setup a test case
+L      <- 1
+T_max  <- 0.1     # time interval length
+K_true <- 0.1     # true value of K
+dx     <- 1e-2    # discretization step in x
+dt     <- 1e-4    # discretization step in t
 
-```{r simulate, fig.width = 6.5, fig.height = 4.5}
-# Setup
-L <- 1        # rod length
-T_end <- 1    # time interval length
-Kappa <- 0.25 # true value of kappa
-dx <- 1e-2    # discretization step in x
-dt <- 1e-4    # discretization step in t
-
-# Define initial heat distribution u(t=0, x)
+# Define initial state u(t=0, x)
 x_grid <- seq(0, 1, by = dx)
-u_init <- x_grid > (0.5 * L)
+u_0 <- as.numeric(x_grid > (0.5 * L))
 
-# Solve u(t=T, x) and plot
-u_end <- solve_u(u_init, T_end, dt, dx)
-plot_u(x_grid, u_init, u_end)
+# Solve u(t=T, x)
+u_T <- stan_be(u_0, dt, dx, T_max, K_true)
+
+# Plot both
+U <- rbind(u_0, u_T)
+t <- c(0, T_max)
+cols <- c("gray30", "firebrick3")
+main <- paste0("Solution with dt=", dt, ", dx=", dx, ", K=", K_true)
+plot_u(x_grid, U, t, cols, main)
 ```
 
 Now, if you're familiar with diffusion equations you might say, 'Oh, you
-fools, you've done a forward Euler method on a diffusion problem and you're
-not even trying to control your error due to your timestep or your spatial
-discretization.'
+fools, you're not even trying to control your error due to your timestep or your spatial discretization.'
 
-Since you are this far in the case study, we will admit, yes, this is a bad way
-to solve the problem. We did it in a pinch because it was easier to do it
+Since you are this far in the case study, we will admit, yes, this is not the best way solve the problem. We did it in a pinch because it was easier to do it
 this way than worry about an adaptive timestep/adaptive meshsize method.
 After all, we are solving a 1D diffusion. We can just make a finer
 discretization or use smaller timesteps and see how the error between successive
 approximations gets smaller.
+
+### 2.2 Simulating data
+
+We add some noise
+
+```{r simulate, fig.width = 6.5, fig.height = 4.5}
+sigma <- 0.1
+print(sigma)
+```
 
 But how should we check this in a model in Stan? The error in the solution from
 using an approximation is important, but really the error in the posterior is
