@@ -100,17 +100,19 @@ We demonstrate solving the system when $K_{true} = 0.1$. We can easily discretiz
 ```{r diffusion, fig.width = 6.75, fig.height = 5}
 # Setup a test case
 L      <- 1
-T_max  <- 0.1     # time interval length
-K_true <- 0.1     # true value of K
-dx     <- 1e-2    # discretization step in x
-dt     <- 1e-3    # discretization step in t
+T_max  <- 1.0     # time interval length
+K_true <- 0.01     # true value of K
+dx     <- 1e-1    # discretization step in x
+dt     <- 1e-1    # discretization step in t
+ul     <- 0.0
+ur     <- 1.0
 
 # Define initial state u(t=0, x)
 x_grid <- seq(0, 1, by = dx)
 u_0 <- as.numeric(x_grid > (0.5 * L))
 
 # Solve u(t=T, x)
-u_T <- stan_be(u_0, dt, dx, T_max, K_true)
+u_T <- stan_be(u_0, dt, dx, T_max, K_true, ul, ur)
 
 # Plot both
 U <- rbind(u_0, u_T)
@@ -136,12 +138,10 @@ We generate data $y$ by adding log-normal noise to $u(t=T,x)$.
 ```{r simulate, fig.width = 6.5, fig.height = 5}
 set.seed(123)
 sigma <- 0.2
-log_y <- u_T + sigma*rnorm(length(u_T))
-f <- exp(u_T)
-y <- exp(log_y)
+y <- rlnorm(length(u_T), log(u_T), sigma)
 main <- paste0('Noisy observations at t = ', T_max) 
 plot(x_grid, y, pch = 20, main = main, xlab = 'x')
-lines(x_grid, f, col = 'firebrick3', lwd = 2)
+lines(x_grid, u_T, col = 'firebrick3', lwd = 2)
 legend(0.1, 3.65, legend = c("y", "exp(u)"), lty = c(NA, 1), pch = c(20, NA),
        col = c('black', 'firebrick3'), lwd = c(2, 2))
 ```
@@ -157,17 +157,18 @@ stan_data <- list(N = length(x_grid),
                   L = L,
                   T = T_max,
                   dt = dt,
-                  sigma = sigma)
+                  sigma = sigma,
+                  ul = ul,
+                  ur = ur)
 ```
 Hello, yes now we fit.
 
-```{r fit, cache=TRUE, results=FALSE}
+```{r fit, cache=TRUE}
 fit <- sampling(model,
                 data = stan_data,
                 iter = 1000,
                 chains = 4,
-                cores = 4,
-                refresh = 0)
+                cores = 4)
 ```
 
 We plot the draws of `K`.
@@ -184,8 +185,7 @@ num_draws <- nrow(U_draws)
 my_col <- grDevices::rgb(220, 20, 25, max = 255, alpha = 10)
 plot(x_grid, y, pch = 20, main="Model fit")
 for (j in seq_len(num_draws)) {
-  ue <- exp(U_draws[j,])
-  lines(x_grid, ue, col = my_col)
+  lines(x_grid, U_draws[j,], col = my_col)
 }
 ```
 
@@ -232,35 +232,34 @@ K_draws <- rstan::extract(fit)$K
 U <- rstan::extract(fit)$u
 U_ref <- 0.0 * U
 num_draws <- nrow(U)
-dt_ref <- 1e-4
+dt_ref <- dt / 10.0
 # This takes a couple of seconds
 for (i in seq_len(num_draws)) {
-  U_ref[i,] <- stan_be(u_0, dt_ref, dx, T_max, K_draws[i])
+  U_ref[i,] <- stan_be(u_0, dt_ref, dx, T_max, K_draws[i], ul, ur)
 }
 ```
 Now we could study the differences `U - U_ref`, but more that the accuracy of the solutions, we are interested in accuracy in terms of the likelihood.
 
 ```{r likelihoods}
-log_y <- log(y)
 log_lh <- rep(0, num_draws)
 log_lh_ref <- rep(0, num_draws)
 sigma_vec <- rep(sigma, ncol(U))
 for (i in seq_len(num_draws)) {
   u <- U[i,]
   u_ref <- U_ref[i,]
-  log_lh[i] <- sum(dnorm(log_y, mean = u, sd = sigma_vec, log = TRUE))
-  log_lh_ref[i] <- sum(dnorm(log_y, mean = u_ref, sd = sigma_vec, log = TRUE))
+  log_lh[i] <- sum(dlnorm(y, mean = u, sd = sigma, log = TRUE))
+  log_lh_ref[i] <- sum(dlnorm(y, mean = u_ref, sd = sigma, log = TRUE))
 }
 ```
 
 They look the same
 ```{r lineplot, fig.width=6, fig.height=4.5}
-plot(log_lh, log_lh_ref)
+hist(log_lh_ref - log_lh)
 ```
 
 Pareto-k diagnostic
 ```{r pareto, fig.width=6, fig.height=4.5}
-loo::psis(log_lh - log_lh_ref)$diagnostics
+loo::psis(log_lh_ref - log_lh)$diagnostics
 ```
 
 ### 2.7 Correcting the Approximation

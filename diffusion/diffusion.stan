@@ -9,6 +9,8 @@ data {
   real T;
   real dt;
   real sigma;
+  real ul;
+  real ur;
 }
 
 transformed data {
@@ -34,10 +36,10 @@ transformed parameters {
   }
   
   // Solve u(t=T,x) using backward Euler method
-  u = stan_be(u, dt, dx, T, K);
+  u = stan_be(u, dt, dx, T, K, ul, ur);
 }
 
 model {
   K ~ normal(0, 1.0);
-  log_y ~ normal(u, sigma);
+  y ~ lognormal(u, sigma);
 }

@@ -86,16 +86,16 @@ be <- function(u_init, dt, dx, Nt, K, ul, ur) {
 #' @param t vector where each value is the correspondinng time (length R)
 #' @param cols vector of colors (length R)
 #' @param main main title
-plot_u <- function(x, U, t, main) {
+plot_u <- function(x, U, t, cols, main) {
   lwd <- 2
   leg <- paste0("t = ", t)
-  plot(x, U[1,], type = 'l', main = main,
+  plot(x, U[1,], col = cols[1], type = 'l', main = main,
        ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
   R <- nrow(U)
   for (r in 2:R) {
-    lines(x, U[r,], lwd = lwd)
+    lines(x, U[r,], col = cols[r], lwd = lwd)
   }
-  legend(0.7, 0.4, legend = leg, lty = rep(1, R), lwd = rep(lwd, R))
+  legend(0.7, 0.4, legend = leg, col = cols, lty = rep(1, R), lwd = rep(lwd, R))
   axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
 }
 
