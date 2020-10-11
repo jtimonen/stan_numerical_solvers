@@ -1,0 +1,14 @@
+
+*.Rhistory
+*.Rapp.history
+*.RData
+*.DS_Store
+*.Rhistory
+*.Renviron
+*.o
+
+*.html
+
+*_files/
+*_cache/
+

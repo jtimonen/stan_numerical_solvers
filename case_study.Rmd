@@ -19,6 +19,7 @@ require(rstan)
 require(bayesplot)
 require(grDevices)
 require(loo)
+require(stats)
 ```
 
 ## 1. Introduction
@@ -247,8 +248,8 @@ sigma_vec <- rep(sigma, ncol(U))
 for (i in seq_len(num_draws)) {
   u <- U[i,]
   u_ref <- U_ref[i,]
-  log_lh[i] <- sum(dlnorm(y, mean = u, sd = sigma, log = TRUE))
-  log_lh_ref[i] <- sum(dlnorm(y, mean = u_ref, sd = sigma, log = TRUE))
+  log_lh[i] <- sum(dlnorm(y, mean = u, sd = sigma_vec, log = TRUE))
+  log_lh_ref[i] <- sum(dlnorm(y, mean = u_ref, sd = sigma_vec, log = TRUE))
 }
 ```
 
