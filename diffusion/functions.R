@@ -55,7 +55,9 @@ solve_tridiag_sym <- function(a, b, d) {
 #' @param dx discretization step in x
 #' @param Nt number of time steps to take
 #' @param K diffusion constant
-be <- function(u_init, dt, dx, Nt, K) {
+#' @param ul value at left boundary
+#' @param ur value at right boundary
+be <- function(u_init, dt, dx, Nt, K, ul, ur) {
   Nx <- length(u_init)
   U <- matrix(0, Nt + 1, Nx)
   U[1, ] <- u_init
@@ -64,18 +66,15 @@ be <- function(u_init, dt, dx, Nt, K) {
   cat(msg)
   
   # Create the diagonal, and upper and lower secondary diagonals of A
-  A_diag <- rep(1.0 + 2.0*K, Nx)
-  A_diag[1] <- 1.0 + K_star
-  A_diag[Nx] <- 1.0 + K_star
+  A_diag <- rep(1.0 + 2.0*K_star, Nx)
   A_band <- rep(-K_star, Nx - 1)
   
   for (n in seq_len(Nt)) {
-    u_n <- U[n,]
+    b <- U[n,]
     #u_np1 <- solve_tridiag(A_band, A_diag, A_band, u_n)
-    u_np1 <- solve_tridiag_sym(A_band, A_diag, u_n)
-    U[n + 1,] <- u_np1
-    U[n + 1, 1] <- 0
-    U[n + 1, Nx] <- 1
+    b[1] = b[1] + ul * K_star
+    b[Nx] = b[Nx] + ur * K_star
+    U[n + 1,] <- solve_tridiag_sym(A_band, A_diag, b)
   }
   return(U)
 }
@@ -87,17 +86,16 @@ be <- function(u_init, dt, dx, Nt, K) {
 #' @param t vector where each value is the correspondinng time (length R)
 #' @param cols vector of colors (length R)
 #' @param main main title
-plot_u <- function(x, U, t, cols, main) {
+plot_u <- function(x, U, t, main) {
   lwd <- 2
   leg <- paste0("t = ", t)
-  plot(x, U[1,], col = cols[1], type = 'l', main = main,
+  plot(x, U[1,], type = 'l', main = main,
        ylab = 'u(t,x)', xaxt = "n", lwd = lwd)
   R <- nrow(U)
   for (r in 2:R) {
-    lines(x, U[r,], col = cols[r], lwd = lwd)
+    lines(x, U[r,], lwd = lwd)
   }
-  legend(0.7, 0.4, legend = leg,
-         col = cols, lty = rep(1, R), lwd = rep(lwd, R))
+  legend(0.7, 0.4, legend = leg, lty = rep(1, R), lwd = rep(lwd, R))
   axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
 }
 
