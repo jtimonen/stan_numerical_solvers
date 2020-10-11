@@ -1,9 +1,8 @@
 require(rstan)
 source('functions.R')
-source('stan_exposer.R')
 
 # Expose stan functions to R
-m <- stan_exposer()
+m <- rstan::stan_model(file = 'diffusion.stan')
 rstan::expose_stan_functions(m)
 
 # Setup a test case

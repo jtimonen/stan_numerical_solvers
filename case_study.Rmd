@@ -1,5 +1,5 @@
 ---
-title: "Using numerical solvers"
+title: "Fast and reliable use of numerical solvers"
 date: "`r Sys.Date()`"
 author: "Juho Timonen and Ben Bales" 
 output:
@@ -99,8 +99,8 @@ We demonstrate solving the system when $K_{true} = 0.1$. We can easily discretiz
 ```{r diffusion, fig.width = 6.75, fig.height = 5}
 # Setup a test case
 L      <- 1
-T_max  <- 1.0     # time interval length
-K_true <- 0.01     # true value of K
+T_max  <- 0.1     # time interval length
+K_true <- 0.2     # true value of K
 dx     <- 1e-2    # discretization step in x
 dt     <- 1e-1    # discretization step in t
 ul     <- 0.0
@@ -135,7 +135,6 @@ approximations gets smaller.
 We generate data $y$ by adding log-normal noise to $u(t=T,x)$.
 
 ```{r simulate, fig.width = 6.5, fig.height = 5}
-set.seed(123)
 sigma <- 0.2
 y <- rnorm(length(u_T), u_T, sigma)
 main <- paste0('Noisy observations at t = ', T_max) 
@@ -162,7 +161,7 @@ stan_data <- list(N = length(x_grid),
 ```
 Hello, yes now we fit.
 
-```{r fit, cache=TRUE}
+```{r fit}
 fit <- sampling(model,
                 data = stan_data,
                 iter = 1000,
@@ -182,7 +181,7 @@ Next we extract the computed solutions and show them.
 U_draws <- rstan::extract(fit)$u
 num_draws <- nrow(U_draws)
 my_col <- grDevices::rgb(220, 20, 25, max = 255, alpha = 10)
-plot(x_grid, y, pch = 20, main="Model fit")
+plot(x_grid, y, pch = 20, main = "Model fit")
 for (j in seq_len(num_draws)) {
   lines(x_grid, U_draws[j,], col = my_col)
 }
@@ -246,15 +245,15 @@ sigma_vec <- rep(sigma, ncol(U))
 for (i in seq_len(num_draws)) {
   u <- U[i,]
   u_ref <- U_ref[i,]
-  log_lh[i] <- sum(dlnorm(y, mean = u, sd = sigma_vec, log = TRUE))
-  log_lh_ref[i] <- sum(dlnorm(y, mean = u_ref, sd = sigma_vec, log = TRUE))
-  log_lh[i] <- sum(dnorm(y, mean = u, sd = sigma, log = TRUE))
+  log_lh[i] <- sum(dnorm(y, mean = u, sd = sigma_vec, log = TRUE))
+  log_lh_ref[i] <- sum(dnorm(y, mean = u_ref, sd = sigma_vec, log = TRUE))
 }
 ```
 
 They look the same
 ```{r lineplot, fig.width=6, fig.height=4.5}
 hist(log_lh_ref - log_lh)
+plot(log_lh_ref, log_lh)
 ```
 
 Pareto-k diagnostic

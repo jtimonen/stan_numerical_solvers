@@ -71,9 +71,10 @@ be <- function(u_init, dt, dx, Nt, K, ul, ur) {
   
   for (n in seq_len(Nt)) {
     b <- U[n,]
-    #u_np1 <- solve_tridiag(A_band, A_diag, A_band, u_n)
     b[1] = b[1] + ul * K_star
     b[Nx] = b[Nx] + ur * K_star
+    
+    # We could use pracma::trisolve here
     U[n + 1,] <- solve_tridiag_sym(A_band, A_diag, b)
   }
   return(U)
@@ -97,12 +98,4 @@ plot_u <- function(x, U, t, cols, main) {
   }
   legend(0.7, 0.4, legend = leg, col = cols, lty = rep(1, R), lwd = rep(lwd, R))
   axis(1, at = c(0, 0.5, 1.0), labels = c("0", "L/2", "L"))
-}
-
-#' Function to plot the development of the solution
-#' 
-#' @param U matrix of solutions
-plot_U <- function(U, T_max) {
-  image(U, main = 'Solution of u(t,x)', xlab = 't', ylab = 'x', xaxt = "n")
-  axis(1, at = c(0, 1.0), labels = c("0", T_max))
 }
