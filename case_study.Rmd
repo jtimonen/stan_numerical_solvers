@@ -87,9 +87,7 @@ The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate 
 We load some functions
 ```{r expose, results=FALSE, message=FALSE}
 source('diffusion/functions.R')
-source('diffusion/stan_exposer.R')
-m <- stan_exposer('diffusion')
-rstan::expose_stan_functions(m)
+expose_stan_functions("diffusion/diffusion.stan")
 ```
 
 ```{r print_stan}
@@ -102,13 +100,13 @@ We demonstrate solving the system when $K_{true} = 0.1$. We can easily discretiz
 L      <- 1
 T_max  <- 1.0     # time interval length
 K_true <- 0.01     # true value of K
-dx     <- 1e-1    # discretization step in x
+dx     <- 1e-2    # discretization step in x
 dt     <- 1e-1    # discretization step in t
 ul     <- 0.0
 ur     <- 1.0
 
 # Define initial state u(t=0, x)
-x_grid <- seq(0, 1, by = dx)
+x_grid <- seq(dx, L - dx, by = dx)
 u_0 <- as.numeric(x_grid > (0.5 * L))
 
 # Solve u(t=T, x)
@@ -138,7 +136,7 @@ We generate data $y$ by adding log-normal noise to $u(t=T,x)$.
 ```{r simulate, fig.width = 6.5, fig.height = 5}
 set.seed(123)
 sigma <- 0.2
-y <- rlnorm(length(u_T), log(u_T), sigma)
+y <- rnorm(length(u_T), u_T, sigma)
 main <- paste0('Noisy observations at t = ', T_max) 
 plot(x_grid, y, pch = 20, main = main, xlab = 'x')
 lines(x_grid, u_T, col = 'firebrick3', lwd = 2)
@@ -247,8 +245,8 @@ sigma_vec <- rep(sigma, ncol(U))
 for (i in seq_len(num_draws)) {
   u <- U[i,]
   u_ref <- U_ref[i,]
-  log_lh[i] <- sum(dlnorm(y, mean = u, sd = sigma, log = TRUE))
-  log_lh_ref[i] <- sum(dlnorm(y, mean = u_ref, sd = sigma, log = TRUE))
+  log_lh[i] <- sum(dnorm(y, mean = u, sd = sigma, log = TRUE))
+  log_lh_ref[i] <- sum(dnorm(y, mean = u_ref, sd = sigma, log = TRUE))
 }
 ```
 
