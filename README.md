@@ -1,3 +1,3 @@
-# fixing_approximations_case_study
+# Using numerical solvers
 
 A Stan case study.
