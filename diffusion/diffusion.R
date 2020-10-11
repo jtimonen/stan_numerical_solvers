@@ -8,7 +8,7 @@ dx <- 1e-2    # discretization step in x
 dt <- 1e-1    # discretization step in t
 
 # Define initial heat distribution u(t=0, x)
-x_grid <- seq(dx, 1 - dx, by = dx)
+x_grid <- seq(dx, L - dx, by = dx)
 u_init <- as.numeric(x_grid > (0.5 * L))
 
 # Solve u(t=T, x) and plot
