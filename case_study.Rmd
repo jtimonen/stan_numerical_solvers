@@ -1,0 +1,275 @@
+---
+title: "Using numerical solvers"
+date: "`r Sys.Date()`"
+author: "Juho Timonen and Ben Bales" 
+output:
+  html_document:
+    toc: true
+    theme: yeti
+    highlight: textmate
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load, message=FALSE}
+require(rstan)
+require(bayesplot)
+require(grDevices)
+require(loo)
+```
+
+## 1. Introduction
+
+Assume we have a Bayesian model
+\begin{equation}
+p(\theta \mid \mathcal{D}) \propto p(\mathcal{D} \mid \theta) p(\theta)
+\end{equation}
+with data $\mathcal{D}$ and parameters $\theta$. Try as we might to make fitting
+this model go fast in Stan, sometimes it just doesn't. There are numerous
+reasons this might happen:
+
+  1. Difficult to sample posterior geometry
+  2. Inefficiently written Stan code
+  3. Lots of data
+  4. Use of heavy numerical methods to perform some calculations
+
+The particular situation we want to discuss here is (4.), meaning you are happy
+with your model, but it involves some implicitly defined functions or variables
+which need to be solved using heavy numerical computations.
+
+The above situation comes up relatively often when dealing with integrals and differential equations in Stan. Stan comes with a couple common ODE integrators (`integrate_ode_rk45`, `integrate_ode_bdf`, `integrate_ode_adams`) and one quadrature scheme (`integrate_1d`) in the language itself. These involve
+error estimation and require defining a tolerance for the error. In general,
+setting a lower tolerance means more accuracy but also more computation time.
+
+If those prepackaged solutions with default tolerances are too slow, something
+else must be done. The possibilities are to
+
+  1. use the built-in methods with less strict tolerances 
+  2. write a simpler custom quadrature or integrator by hand in the Stan
+    model code.
+
+These have in many cases been faster or more stable than the reference implementation in Stan. However, the question immediately becomes, how do I
+know my method is accurate enough?
+
+The goal of this case study is to figure out if your numerical method is biasing
+the posterior inference of $\theta$, and, if possible use importance sampling to correct model predictions. This is using techniques from the papers
+[@yao2018], [@vehtari2019], and
+the `loo` software package (https://mc-stan.org/loo).
+
+## 2. 1D Diffusion Example
+
+### 2.1  Problem definition
+
+First, let's start with a problem where Stan is slow. Let's pretend that we are modeling heat diffusion on a rod $x \in [0, L]$ as a partial differential equation
+\begin{equation}
+\frac{\partial u}{\partial t} = \kappa \cdot \frac{\partial^2 u}{\partial x^2}
+\end{equation}
+with boundary conditions
+$$
+u(t, x = 0) = 0 \\
+u(t, x = L) = 1
+$$
+and initial heat distribution
+\begin{equation}
+u(t = 0, x) = 
+\begin{cases}
+0 & \text{ if } \hspace{0.5cm} 0 \leq x \leq \frac{L}{2} \\
+1 & \text{ if } \hspace{0.5cm} \frac{L}{2} < x \leq 1
+\end{cases}
+\end{equation}
+The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate it from noisy measurements of the concentration $u(t,x)$ at time $t = T$.
+
+### 2.2 Numerical solution
+
+We load some functions
+```{r expose, results=FALSE, message=FALSE}
+source('diffusion/functions.R')
+source('diffusion/stan_exposer.R')
+m <- stan_exposer('diffusion')
+rstan::expose_stan_functions(m)
+```
+
+```{r print_stan}
+#print(m) # print model code
+```
+We demonstrate solving the system when $K_{true} = 0.1$. We can easily discretize the system using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines). We use the backward Euler method to solve $u(t,x)$.
+
+```{r diffusion, fig.width = 6.75, fig.height = 5}
+# Setup a test case
+L      <- 1
+T_max  <- 0.1     # time interval length
+K_true <- 0.1     # true value of K
+dx     <- 1e-2    # discretization step in x
+dt     <- 1e-3    # discretization step in t
+
+# Define initial state u(t=0, x)
+x_grid <- seq(0, 1, by = dx)
+u_0 <- as.numeric(x_grid > (0.5 * L))
+
+# Solve u(t=T, x)
+u_T <- stan_be(u_0, dt, dx, T_max, K_true)
+
+# Plot both
+U <- rbind(u_0, u_T)
+t <- c(0, T_max)
+cols <- c("gray30", "firebrick3")
+main <- paste0("Solution with dt=", dt, ", dx=", dx, ", K=", K_true)
+plot_u(x_grid, U, t, cols, main)
+```
+
+Now, if you're familiar with diffusion equations you might say, 'Oh, you
+fools, you're not even trying to control your error due to your timestep or your spatial discretization.'
+
+Since you are this far in the case study, we will admit, yes, this is not the best way solve the problem. We did it in a pinch because it was easier to do it
+this way than worry about an adaptive timestep/adaptive meshsize method.
+After all, we are solving a 1D diffusion. We can just make a finer
+discretization or use smaller timesteps and see how the error between successive
+approximations gets smaller.
+
+### 2.3 Simulating data
+
+We generate data $y$ by adding log-normal noise to $u(t=T,x)$.
+
+```{r simulate, fig.width = 6.5, fig.height = 5}
+set.seed(123)
+sigma <- 0.2
+log_y <- u_T + sigma*rnorm(length(u_T))
+f <- exp(u_T)
+y <- exp(log_y)
+main <- paste0('Noisy observations at t = ', T_max) 
+plot(x_grid, y, pch = 20, main = main, xlab = 'x')
+lines(x_grid, f, col = 'firebrick3', lwd = 2)
+legend(0.1, 3.65, legend = c("y", "exp(u)"), lty = c(NA, 1), pch = c(20, NA),
+       col = c('black', 'firebrick3'), lwd = c(2, 2))
+```
+
+### 2.4 Posterior inference in Stan
+
+We define stan model and data.
+```{r model, results=FALSE, message=FALSE}
+model <- stan_model("diffusion/diffusion.stan")
+stan_data <- list(N = length(x_grid),
+                  x = x_grid,
+                  y = y,
+                  L = L,
+                  T = T_max,
+                  dt = dt,
+                  sigma = sigma)
+```
+Hello, yes now we fit.
+
+```{r fit, cache=TRUE, results=FALSE}
+fit <- sampling(model,
+                data = stan_data,
+                iter = 1000,
+                chains = 4,
+                cores = 4,
+                refresh = 0)
+```
+
+We plot the draws of `K`.
+
+```{r trace_plot, fig.width = 6.5, fig.height = 3.5}
+bayesplot::mcmc_trace(fit, pars = 'K')
+get_elapsed_time(fit)
+```
+
+Next we extract the computed solutions and show them.
+```{r plot_fits, fig.width = 6.5, fig.height = 5}
+U_draws <- rstan::extract(fit)$u
+num_draws <- nrow(U_draws)
+my_col <- grDevices::rgb(220, 20, 25, max = 255, alpha = 10)
+plot(x_grid, y, pch = 20, main="Model fit")
+for (j in seq_len(num_draws)) {
+  ue <- exp(U_draws[j,])
+  lines(x_grid, ue, col = my_col)
+}
+```
+
+
+### 2.5 Is the method accurate enough?
+
+But how do we know if the method is accurate enough?
+
+Assume we have a distribution $p_{true}(\theta)$ and $p_{approx}(\theta)$.
+
+$p_{approx}$ is meant to approximate $p_{true}$. If they have the same support
+then mathematically we can write expectations over $p_{true}$ as weighted
+expectations over $p_{approx}$.
+
+$$
+E[f(\theta)] = \int f(\theta) p_{true}(\theta)\\
+ = \int f(\theta) \frac{p_{true}(\theta)}{p_{approx}(\theta)}p_{approx}(\theta)d\theta
+$$
+
+If we're computing estimates with Monte Carlo, this means we replace
+expectations over samples from our true distribution with weighted samples from
+the approximate distribution.
+
+$$
+E[f(\theta)] \approx \frac{1}{N} \sum_n^N f(\theta_n) \\
+\approx \frac{1}{N} \sum_n^N f(\theta_n) \frac{p_{true}(\theta)}{p_{approx}(\theta)}
+$$
+This is useful in MCMC when it is easier to sample from the approximation
+than the truth. The ratios $\frac{p_{true}}{p_{approx}}$ are called importance
+ratios. Perhaps unsurprisingly, this correction does not always work with
+Monte Carlo. Indeed, if the difference in $p_{true}$ and $p_{approx}$ is too
+great, then the importance ratios will be mostly things going to infinity or
+zero.
+
+In general, we can diagnose if the expectations will work by examing the
+distribution of the importance weights by using the Pareto Smooth Importance
+Sampling diagnostic. 
+
+### 2.6 Computing reference solutions
+For each draw of $K$, we compute a more reliable reference solution using 10x denser time discretization.
+
+```{r reference, fig.width = 6.5, fig.height = 5}
+K_draws <- rstan::extract(fit)$K
+U <- rstan::extract(fit)$u
+U_ref <- 0.0 * U
+num_draws <- nrow(U)
+dt_ref <- 1e-4
+# This takes a couple of seconds
+for (i in seq_len(num_draws)) {
+  U_ref[i,] <- stan_be(u_0, dt_ref, dx, T_max, K_draws[i])
+}
+```
+Now we could study the differences `U - U_ref`, but more that the accuracy of the solutions, we are interested in accuracy in terms of the likelihood.
+
+```{r likelihoods}
+log_y <- log(y)
+log_lh <- rep(0, num_draws)
+log_lh_ref <- rep(0, num_draws)
+sigma_vec <- rep(sigma, ncol(U))
+for (i in seq_len(num_draws)) {
+  u <- U[i,]
+  u_ref <- U_ref[i,]
+  log_lh[i] <- sum(dnorm(log_y, mean = u, sd = sigma_vec, log = TRUE))
+  log_lh_ref[i] <- sum(dnorm(log_y, mean = u_ref, sd = sigma_vec, log = TRUE))
+}
+```
+
+They look the same
+```{r lineplot, fig.width=6, fig.height=4.5}
+plot(log_lh, log_lh_ref)
+```
+
+Pareto-k diagnostic
+```{r pareto, fig.width=6, fig.height=4.5}
+loo::psis(log_lh - log_lh_ref)$diagnostics
+```
+
+### 2.7 Correcting the Approximation
+Heck.
+
+## Computation environment
+
+```{r session}
+sessionInfo()
+```
+
+## References
