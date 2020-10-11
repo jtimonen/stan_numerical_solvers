@@ -18,6 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 require(rstan)
 require(bayesplot)
 require(grDevices)
+require(ggplot2)
 require(loo)
 require(stats)
 ```
@@ -251,9 +252,16 @@ for (i in seq_len(num_draws)) {
 ```
 
 They look the same
-```{r lineplot, fig.width=6, fig.height=4.5}
+```{r lineplot, fig.width=6.5, fig.height=4.5}
 hist(log_lh_ref - log_lh)
-plot(log_lh_ref, log_lh)
+df <- data.frame(log_lh, log_lh_ref, K_draws)
+colnames(df)[3] <- "K"
+plt <- ggplot(df, aes_string(x = "log_lh", y = "log_lh_ref", col = "K")) + geom_point()
+A <- min(c(log_lh, log_lh_ref))
+B <- max(c(log_lh, log_lh_ref))
+df_line <- data.frame(x = c(A,B), y = c(A,B))
+plt <- plt + geom_line(data = df_line, aes_string(x = "x", y = "y"), inherit.aes = FALSE, col = "firebrick3", lty = 2)
+plt
 ```
 
 Pareto-k diagnostic
