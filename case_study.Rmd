@@ -99,10 +99,10 @@ We demonstrate solving the system when $K_{true} = 0.1$. We can easily discretiz
 ```{r diffusion, fig.width = 6.75, fig.height = 5}
 # Setup a test case
 L      <- 1
-T_max  <- 0.1     # time interval length
+T_max  <- 0.05    # time interval length
 K_true <- 0.2     # true value of K
 dx     <- 1e-2    # discretization step in x
-dt     <- 1e-1    # discretization step in t
+dt     <- 1e-2    # discretization step in t
 ul     <- 0.0
 ur     <- 1.0
 
@@ -135,7 +135,7 @@ approximations gets smaller.
 We generate data $y$ by adding log-normal noise to $u(t=T,x)$.
 
 ```{r simulate, fig.width = 6.5, fig.height = 5}
-sigma <- 0.2
+sigma <- 0.15
 y <- rnorm(length(u_T), u_T, sigma)
 main <- paste0('Noisy observations at t = ', T_max) 
 plot(x_grid, y, pch = 20, main = main, xlab = 'x')
@@ -164,8 +164,6 @@ Hello, yes now we fit.
 ```{r fit}
 fit <- sampling(model,
                 data = stan_data,
-                iter = 1000,
-                chains = 4,
                 cores = 4)
 ```
 
@@ -223,18 +221,20 @@ distribution of the importance weights by using the Pareto Smooth Importance
 Sampling diagnostic. 
 
 ### 2.6 Computing reference solutions
-For each draw of $K$, we compute a more reliable reference solution using 10x denser time discretization.
+For each draw of $K$, we compute a more reliable reference solution using 100x denser time discretization.
 
 ```{r reference, fig.width = 6.5, fig.height = 5}
 K_draws <- rstan::extract(fit)$K
 U <- rstan::extract(fit)$u
 U_ref <- 0.0 * U
 num_draws <- nrow(U)
-dt_ref <- dt / 10.0
-# This takes a couple of seconds
+dt_ref <- dt / 100.0
+
+start_time <- Sys.time()
 for (i in seq_len(num_draws)) {
   U_ref[i,] <- stan_be(u_0, dt_ref, dx, T_max, K_draws[i], ul, ur)
 }
+Sys.time() - start_time
 ```
 Now we could study the differences `U - U_ref`, but more that the accuracy of the solutions, we are interested in accuracy in terms of the likelihood.
 
