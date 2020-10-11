@@ -38,6 +38,6 @@ transformed parameters {
 }
 
 model {
-  K ~ normal(0, 0.5);
+  K ~ normal(0, 1.0);
   log_y ~ normal(u, sigma);
 }
