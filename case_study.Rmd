@@ -25,41 +25,73 @@ require(stats)
 
 ## 1. Introduction
 
-Assume we have a Bayesian model
-\begin{equation}
-p(\theta \mid \mathcal{D}) \propto p(\mathcal{D} \mid \theta) p(\theta)
-\end{equation}
-with data $\mathcal{D}$ and parameters $\theta$. Try as we might to make fitting
-this model go fast in Stan, sometimes it just doesn't. There are numerous
-reasons this might happen:
+Assume we have a Bayesian model that involves a numeric solution to some
+ODE or PDE. Try as we might, these calculations are often expensive and
+frequently becomes the limiting factors in whatever model they are involved in.
 
-  1. Difficult to sample posterior geometry
-  2. Inefficiently written Stan code
-  3. Lots of data
-  4. Use of heavy numerical methods to perform some calculations
+The simplest things we might do to speed up our calculations are lower the
+timestep, coarsen the discretization, or increase the tolerance of the solvers.
 
-The particular situation we want to discuss here is (4.), meaning you are happy
-with your model, but it involves some implicitly defined functions or variables
-which need to be solved using heavy numerical computations.
+That immediately leaves us with the question, is this okay? Has lowering the
+tolerance affected the statistics of our solution? The technical answer is yes,
+the practical answer is maybe, and the ideal case is no, but without checking
+there's no way of knowing.
 
-The above situation comes up relatively often when dealing with integrals and differential equations in Stan. Stan comes with a couple common ODE integrators (`integrate_ode_rk45`, `integrate_ode_bdf`, `integrate_ode_adams`) and one quadrature scheme (`integrate_1d`) in the language itself. These involve
-error estimation and require defining a tolerance for the error. In general,
-setting a lower tolerance means more accuracy but also more computation time.
+And so how can something like this be checked? The numerical approximation
+answer is we should compare to a reference model and verify that the solution
+at all points in space/time in the approximation are appropriately close
+to the reference. That isn't so much of a problem in and of itself, but we're
+doing statistics, and so we need to know that the solution is accurate enough
+across all relevant parts of parameter space. Additionally, the "relevant parts
+of parameter space" is the posterior itself which is not known beforehand!
 
-If those prepackaged solutions with default tolerances are too slow, something
-else must be done. The possibilities are to
+And so the problem of validating an approximation in a Bayesian model is
+significantly more complicated than in the classical numerical analysis world.
+The point of this case study is to show how by adding one additional tool 
+Pareto-Smoothed Importance Sampling (PSIS [@yao2018], [@vehtari2019]), we can
+solve this problem.
 
-  1. use the built-in methods with less strict tolerances 
-  2. write a simpler custom quadrature or integrator by hand in the Stan
-    model code.
+## 2. PSIS and computing a reference model
 
-These have in many cases been faster or more stable than the reference implementation in Stan. However, the question immediately becomes, how do I
-know my method is accurate enough?
+To understand the usefulness of PSIS, we must first discuss importance sampling.
+Assume we have two models, $p_{high}$ and $p_{low}$. $p_{high}$ will be an
+expensive, high precision model and $p_{low}$ is a cheap, low precision model.
+If we want to compute expectations with the high precision model, we can take
+draws from the low precision models and reweight these according to the
+importance weights $\frac{p_{high}}{p_{low}}$. If these models are too
+different, then the reweighting will produce noisy estimates that are not
+useful. PSIS and particularly the Pareto-k diagnostic is the tool that tells us
+when we can or cannot rely on the importance weights.
 
-The goal of this case study is to figure out if your numerical method is biasing
-the posterior inference of $\theta$, and, if possible use importance sampling to correct model predictions. This is using techniques from the papers
-[@yao2018], [@vehtari2019], and
-the `loo` software package (https://mc-stan.org/loo).
+Because of this, if $p_{high}$ is a reference model that we trust completely,
+our workflow can be:
+
+1. Generate draws from $p_{low}$
+2. Compute importance weights $\frac{p_{high}}{p_{low}}$
+3. Break if Pareto-k is sufficiently low, otherwise raise precision of $p_{low}$
+and loop
+4. Resample draws using importance weights
+
+As described above though, we never really have a reference $p_{high}$ that
+we trust completely because we never really know where exactly to evaluate the
+solution. PSIS gives us an answer to this though. Expanding the workflow above
+with a new step we get:
+
+1. Generate draws from $p_{low}$
+2. Compute a reference solution, $p_{high}$ at these draws
+3. Compute importance weights $\frac{p_{high}}{p_{low}}$
+4. Break if Pareto-k is sufficiently low, otherwise raise precision of $p_{low}$
+and loop
+5. Resample draws using importance weights
+
+Step #2 should be done using whatever application and method specific numerical
+techniques are applicable. In this workflow we have both solved the problem
+of picking an appropriate approximation and also the problem of developing a
+good reference model.
+
+The rest of this case study is demonstrating how to do this on a simple PDE
+model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
+[`posterior`](https://github.com/stan-dev/posterior) software packages.
 
 ## 2. 1D Diffusion Example
 
@@ -82,7 +114,7 @@ u(t = 0, x) =
 1 & \text{ if } \hspace{0.5cm} \frac{L}{2} < x \leq 1
 \end{cases}
 \end{equation}
-The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate it from noisy measurements of the concentration $u(t,x)$ at time $t = T$.
+The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate it from noisy measurements of the temperature $u(t,x)$ at time $t = T$.
 
 ### 2.2 Numerical solution
 
