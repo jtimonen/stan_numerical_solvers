@@ -6,6 +6,8 @@
 *.Renviron
 
 *.html
+*.md
+figure/
 
 *_files/
 *_cache/
