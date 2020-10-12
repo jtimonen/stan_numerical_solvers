@@ -66,7 +66,6 @@ data {
   vector[N] y;
   real T;
   real dt;
-  real sigma;
   real ul;
   real ur;
 }
@@ -76,7 +75,8 @@ transformed data {
 }
 
 parameters {
-  real<lower = 0.0> K; // diffusion constant
+  real<lower = 0.0> K;     // diffusion constant
+  real<lower = 0.0> sigma; // noise magnitude
 }
 
 transformed parameters {
@@ -97,6 +97,7 @@ transformed parameters {
 }
 
 model {
+  sigma ~ normal(0, 1.0);
   K ~ normal(0, 1.0);
   y ~ normal(u, sigma);
 }

@@ -89,7 +89,8 @@ The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate 
 We load some functions
 ```{r expose, results=FALSE, message=FALSE}
 source('diffusion/functions.R')
-expose_stan_functions("diffusion/diffusion.stan")
+model <- stan_model("diffusion/diffusion.stan")
+expose_stan_functions(model)
 ```
 
 ```{r print_stan}
@@ -106,6 +107,8 @@ dx     <- 1e-2    # discretization step in x
 dt     <- 1e-2    # discretization step in t
 ul     <- 0.0
 ur     <- 1.0
+K_star <- K_true*dt/(dx^2)
+msg <- paste0("K_star = ", K_star) 
 
 # Define initial state u(t=0, x)
 x_grid <- seq(dx, L - dx, by = dx)
@@ -149,7 +152,6 @@ legend(0.1, 3.65, legend = c("y", "exp(u)"), lty = c(NA, 1), pch = c(20, NA),
 
 We define stan model and data.
 ```{r model, results=FALSE, message=FALSE}
-model <- stan_model("diffusion/diffusion.stan")
 stan_data <- list(N = length(x_grid),
                   x = x_grid,
                   y = y,
@@ -168,7 +170,7 @@ fit <- sampling(model,
                 cores = 4)
 ```
 
-We plot the draws of `K`.
+We plot the draws of $K$.
 
 ```{r trace_plot, fig.width = 6.5, fig.height = 3.5}
 bayesplot::mcmc_trace(fit, pars = 'K')
@@ -226,6 +228,7 @@ For each draw of $K$, we compute a more reliable reference solution using 100x d
 
 ```{r reference, fig.width = 6.5, fig.height = 5}
 K_draws <- rstan::extract(fit)$K
+sigma_draws <- rstan::extract(fit)$sigma
 U <- rstan::extract(fit)$u
 U_ref <- 0.0 * U
 num_draws <- nrow(U)
@@ -242,18 +245,19 @@ Now we could study the differences `U - U_ref`, but more that the accuracy of th
 ```{r likelihoods}
 log_lh <- rep(0, num_draws)
 log_lh_ref <- rep(0, num_draws)
-sigma_vec <- rep(sigma, ncol(U))
 for (i in seq_len(num_draws)) {
   u <- U[i,]
   u_ref <- U_ref[i,]
-  log_lh[i] <- sum(dnorm(y, mean = u, sd = sigma_vec, log = TRUE))
-  log_lh_ref[i] <- sum(dnorm(y, mean = u_ref, sd = sigma_vec, log = TRUE))
+  log_lh[i] <- sum(dnorm(y, u, sigma_draws[i], log = TRUE))
+  log_lh_ref[i] <- sum(dnorm(y, u_ref, sigma_draws[i], log = TRUE))
 }
 ```
 
 They look the same
-```{r lineplot, fig.width=6.5, fig.height=4.5}
+```{r plot1, fig.width=6.5, fig.height=4.5}
 hist(log_lh_ref - log_lh)
+
+# maybe use a color scale that is like red for negative differences and blue for positive?
 df <- data.frame(log_lh, log_lh_ref, K_draws)
 colnames(df)[3] <- "K"
 plt <- ggplot(df, aes_string(x = "log_lh", y = "log_lh_ref", col = "K")) + geom_point()
@@ -264,9 +268,16 @@ plt <- plt + geom_line(data = df_line, aes_string(x = "x", y = "y"), inherit.aes
 plt
 ```
 
+```{r plot2, fig.width=6.5, fig.height=4.5}
+df <- data.frame(K_draws, sigma_draws, log_lh - log_lh_ref)
+colnames(df) <- c("K", "sigma", "diff")
+plt <- ggplot(df, aes_string(x = "K", y = "sigma", col = "diff")) + geom_point()
+plt
+```
+
 Pareto-k diagnostic
 ```{r pareto, fig.width=6, fig.height=4.5}
-loo::psis(log_lh_ref - log_lh)$diagnostics
+loo::psis(log_lh - log_lh_ref)$diagnostics
 ```
 
 ### 2.7 Correcting the Approximation
