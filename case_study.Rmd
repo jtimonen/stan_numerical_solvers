@@ -16,6 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r load, message=FALSE}
 require(rstan)
+library(tidyverse)
 require(bayesplot)
 require(grDevices)
 require(ggplot2)
@@ -111,58 +112,150 @@ Wait, is `integrate_ode_bdf` deprecated in 2.24? Should we the `ode_bdf_tol` ver
 
 ### 3.1  Problem definition
 
-In this example we consider the concentration of some substance $u(t,x)$ which
-a function of time $t \geq 0$ and location $x \in [0, L]$. The diffusion follows a partial differential equation
+In this example we consider the diffusion of heat ($u(t, x)$) in a rod
+($x \in [0, L]$). In this hypothetical experiment, the rod is cooled to room
+temperature and then heated from both sides. After some time the temperature
+profile of the rod is measured and from this a thermal diffusivity is to be
+estimated.
+
+The dynamics are governed by the 1D heat equation:
+
 \begin{align}
 \frac{\partial u}{\partial t} &= K \cdot \frac{\partial^2 u}{\partial x^2} \\
-u(0, x) &= f(x) \\
-u(t, 0) &= 0 \\
+u(0, x) &= 0 \\
+u(t, 0) &= 1 \\
 u(t, L) &= 1
 \end{align}
-This is called a 1D diffusion (or heat) equation. Our initial concentration is a step function
-\begin{equation}
-f(x) = 
-\begin{cases}
-0 & \text{ if } \hspace{0.5cm} 0 \leq x \leq \frac{L}{2} \\
-1 & \text{ if } \hspace{0.5cm} \frac{L}{2} < x \leq 1
-\end{cases}.
-\end{equation}
-The thermal diffusivity parameter $\kappa$ is unknown. The goal is to eastimate it from noisy measurements of the temperature $u(t,x)$ at time $t = T$.
 
-### 3.2 Numerical solution
+All of the computations in this case study are going to be done with a method of
+lines discretization of this problem and a backwards Euler integrator. The
+appropriate math is described in the online lecture notes
+[ATM 623: Climate Modeling](http://www.atmos.albany.edu/facstaff/brose/classes/ATM623_Spring2015/Notes/Lectures/Lecture16%20--%20Numerical%20methods%20for%20diffusion%20models.html) by Brian E. J. Rose, though any introductory PDE reference should suffice.
 
-We load some functions
+For convenience we have defined some Stan functions that solve our problem
+given a timestep, a spatial discretization, a hypothetical diffusivity, etc.
+
 ```{r expose, results=FALSE, message=FALSE}
-source('diffusion/functions.R')
 model <- stan_model("diffusion/diffusion.stan")
 expose_stan_functions(model)
 ```
 
-```{r print_stan}
-#print(m) # print model code
+The function signature is:
+
 ```
-We demonstrate solving the system when $K_{true} = 0.2$. 
-We can easily discretize the system using [method of lines](https://en.wikipedia.org/wiki/Method_of_lines). We use the backward Euler method to solve $u(t,x)$.
+vector stan_be(u0, dt, dx, Tmax, K, ul, ur)
+```
+
+With arguments:
+
+* `u0` - Initial condition
+* `dt` - Timestep
+* `dx` - Spatial discretization
+* `Tmax` - Time to simulate to
+* `K` - Thermal diffusivity
+* `ul` - Left boundary condition
+* `ur` - Right boundary condition
+
+Let us pick a diffusivity $K_{true} = 0.05$ and assume that we measure the
+temperature in the rod at $x = \frac{1}{4} L$, $x = \frac{1}{2} L$, and
+$x = \frac{3}{4} L$. We will generate data under these conditions and try to
+recover the diffusivity at the inference stage.
+
+Our first job is to select a `dt` and `dx` for the reference calculation. We
+will do this by manually selecting a `dt` and `dx` that are accurate enough.
+
+First, let's set up constants and plot a solution:
 
 ```{r diffusion, fig.width = 6.75, fig.height = 5}
-# Setup a test case
-L      <- 1
-T_max  <- 0.05    # time interval length
-K_true <- 0.2     # true value of K
-dx     <- 1e-2    # discretization step in x
-dt     <- 1e-2    # discretization step in t
-ul     <- 0.0
-ur     <- 1.0
-K_star <- K_true*dt/(dx^2)
-msg <- paste0("K_star = ", K_star) 
+L <- 1.0 # Rod length
+dx <- 0.1
+xsim <- seq(dx, L - dx, by = dx)
+u0 <- rep(0, length(xsim))
+Tmax <- 1.0
+Ktrue <- 0.05
+ul <- 1.0
+ur <- 1.0
+xmeas <- c(L / 4, L / 2, 3 * L / 4)
 
-# Define initial state u(t=0, x)
-x_grid <- seq(dx, L - dx, by = dx)
-u_0 <- as.numeric(x_grid > (0.5 * L))
+uT = stan_be(u0, dt, dx, Tmax, Ktrue, ul, ur)
 
-# Solve u(t=T, x)
-u_T <- stan_be(u_0, dt, dx, T_max, K_true, ul, ur)
+tibble(x = c(0.0, xsim, L),
+       uT = c(ul, uT, ur)) %>%
+  ggplot(aes(x, uT)) +
+  geom_line() +
+  geom_point() +
+  ylim(0.0, 1.0) +
+  xlim(0.0, 1.0)
+```
 
+To determine a suitable timestep we can look at the maximum absolute error at
+our measurement points between a solution computed with timestep $\Delta t$ and
+a solution computed with timestep $\Delta t / 2$ as $\Delta t \rightarrow 0$.
+
+```{r}
+log2_N_max_steps = 16
+solutions = list()
+dts = rep(0, log2_N_max_steps)
+for(log2_N_steps in 1:log2_N_max_steps) {
+  steps = 2^log2_N_steps
+  dt = Tmax / steps
+  
+  uT <- stan_be(u0, dt, dx, Tmax, Ktrue, ul, ur)
+  solutions[[log2_N_steps]] <- approx(xsim, uT, xmeas)$y
+  dts[log2_N_steps] <- dt
+}
+
+errors = c()
+for(i in 1:(length(dts) - 1)) {
+  errors = c(errors, max(abs(solutions[[i + 1]] - solutions[[i]])))
+}
+
+tibble(dt = dts[1:(length(dts) - 1)],
+       error = errors) %>%
+  ggplot(aes(dt, error)) +
+  geom_line() +
+  scale_y_log10() +
+  scale_x_log10()
+```
+This means that with `dt = 0.0001`, the maximum error between this an a more
+precise solution is $O(10^{-5})$. We could easily push it lower, but let's say
+this is good enough for now.
+
+```{r}
+log2_N_max_steps = 12
+solutions = list()
+dxs = rep(0, log2_N_max_steps)
+for(log2_N_steps in 1:log2_N_max_steps) {
+  steps = 2^log2_N_steps
+  dx = L / (steps + 1)
+  xsim <- seq(dx, L - dx, by = dx)
+  u0 <- rep(0, length(xsim))
+  
+  uT <- stan_be(u0, dt, dx, Tmax, Ktrue, ul, ur)
+  solutions[[log2_N_steps]] <- approx(xsim, uT, xmeas, rule = 2)$y
+  dxs[log2_N_steps] <- dx
+}
+
+errors = c()
+for(i in 1:(length(dxs) - 1)) {
+  errors = c(errors, max(abs(solutions[[i + 1]] - solutions[[i]])))
+}
+
+tibble(dx = dxs[1:(length(dxs) - 1)],
+       error = errors) %>%
+  ggplot(aes(dx, error)) +
+  geom_line() +
+  scale_y_log10() +
+  scale_x_log10()
+```
+For a very modest `dx`, the maximum absolute error we see between two
+approximations is $O(10^{-5})$.
+
+Now, the primary point of that very boring exercise was to generate data tha
+we can fit with our statistical model. The secondary point though, was that we
+can 
+
+```{r}
 # Plot both
 U <- rbind(u_0, u_T)
 t <- c(0, T_max)
