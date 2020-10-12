@@ -18,12 +18,12 @@ functions {
   }
   
   // Solve the SIR system
-  // TODO: fix
-  // TODO: should we use ode_bdf_tol?
-  vector[] stan_integrate_ode(y0, t0, ts, theta, int N,
-  real rtol, real atol, int max_steps) {
-    vector[n_days] f[3] = integrate_ode_bdf(stan_sir, y0, t0, ts, theta, 
-      [], { N }, rtol, atol, max_steps);
+  real[,] stan_odesolve(real[] y0, real t0, real[] ts, real[] theta,
+      data real[] x_r, data int N, data real rtol, data real atol, data int max_steps) {
+    int n_days = num_elements(ts);
+    int x_i[1] = { N };
+    real f[n_days, 3] = integrate_ode_bdf(stan_sir, y0, t0, ts, theta, x_r, x_i,
+    rtol, atol, max_steps);
     return(f);
   }
   
@@ -52,7 +52,7 @@ transformed parameters{
     theta[1] = beta;
     theta[2] = gamma;
 
-    y = integrate_ode_rk45(sir, y0, t0, ts, theta, x_r, x_i);
+    //y = stan_odesolve(sir, y0, t0, ts, theta, x_r, x_i);
   }
 }
 
