@@ -35,13 +35,10 @@ The required `posterior` package is not in CRAN but can be installed via
 
 # Introduction
 
-Assume we have a Bayesian model that involves a numeric solution to some
-ODE or PDE (ordinary or partial differential equation). Try as we might, these calculations are often expensive and frequently becomes the limiting factors in whatever model they are involved in.
+Assume we have a Bayesian model that involves a numeric solution to some ODE or PDE (ordinary or partial differential equation), which contains
+uncertain parameters. Try as we might, these calculations are often expensive and frequently become the limiting factors in whatever model they are involved in. The simplest things we might do to speed up our calculations are lowering the timestep, coarsening the discretization, or increasing the tolerance of the solvers.
 
-The simplest things we might do to speed up our calculations are lower the
-timestep, coarsen the discretization, or increase the tolerance of the solvers.
-
-That immediately leaves us with the question, is this okay? Has lowering the
+That immediately leaves us with the question, is this okay? Has loosening the
 tolerance affected the statistics of our solution? The technical answer is yes,
 the practical answer is maybe, and the ideal case is no, but without checking
 there's no way of knowing.
@@ -58,13 +55,12 @@ And so the problem of validating an approximation in a Bayesian model is
 significantly more complicated than in the classical numerical analysis world.
 The point of this case study is to show how by adding one additional tool, namely Pareto-Smoothed Importance Sampling (PSIS; @yao2018, @vehtari2019), we can solve this problem.
 
-# PSIS and computing a reference model
+# Workflow
 
-To understand the usefulness of PSIS, we must first discuss importance sampling.
-Assume we have two models, $p_{high}$ and $p_{low}$. $p_{high}$ will be an
-expensive, high precision model and $p_{low}$ is a cheap, low precision model.
-If we want to compute expectations with the high precision model, we can take
-draws from the low precision models and reweight these according to the
+Assume we have two models, $M_{high}$ and $M_{low}$.
+These are otherwise the same model, except that $M_{low}$ uses a cheaper and less accurate numerical methods (or just looser tolerances) to compute the required ODE or PDE solutions. Therefore they have different posteriors, $p_{high}$ and $p_{low}$, respectively.
+
+To understand how PSIS comes into play, we must first discuss importance sampling. If we want to compute expectations with the high precision model, we can take draws from the low precision models and reweight these according to the
 importance weights $\frac{p_{high}}{p_{low}}$. If these models are too
 different, then the reweighting will produce noisy estimates that are not
 useful. PSIS and particularly the $\hat{k}$ diagnostic (pronounced k-hat) is
@@ -72,38 +68,23 @@ the tool that tells us when we can or cannot rely on the importance weights. If
 $\hat{k} < 0.5$ we are safe to do the importance sampling, if $\hat{k} < 0.7$
 the importance sampling will start to converge more slowly, and if
 $\hat{k} > 0.7$ the importance sampling estimates are unreliable. For simplicity
-we will only considier the $\hat{k} < 0.5$ threshold.
+we will only consider the $\hat{k} < 0.5$ threshold.
 
-Because of this, if $p_{high}$ is a reference model that we trust completely,
-our workflow can be:
+Ideally, $M_{high}$ would involve a numerical method that we can trust
+completely, in all parts of the parameter space. This is required because for example the properties (such as stiffness) of an ODE system can be very different in different parts of the parameter space. The problem however, is that it is not generally possible to check whether a given method is reliable everywhere. Classical numerical methods can be used to check the reliability, but only for one parameter combination at a time.
 
-1. Generate draws from $p_{low}$
-2. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$
-diagnostic.
-3. Break if $\hat{k} < 0.5$, otherwise raise precision of $p_{low}$
-and loop
-4. Resample draws using importance weights
+We propose a workflow, which neatly solves not only the problem of picking an appropriate approximation, but also the problem of developing a good reference model.
 
-As described above though, we never really have a reference $p_{high}$ that
-we trust completely because we never really know where exactly to evaluate the
-solution. PSIS gives us an answer to this though. Expanding the workflow above
-with a new step we get:
-
-1. Generate draws from $p_{low}$
-2. Compute a reference solution, $p_{high}$ at these draws
+1. Generate draws from $p_{low}$.
+2. Tune the numerical method in $M_{high}$ so that it is reliable at
+these draws. All application specific knowledge and classical numerical
+methods can be used here.
 3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$
 diagnostic.
-4. Break if $\hat{k} < 0.5$, otherwise raise precision of $p_{low}$
-and loop
-5. Resample draws using importance weights
+4. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1.
+5. Resample draws using importance weights.
 
-Step #2 should be done using whatever application and method specific numerical
-techniques are applicable. In this workflow we have both solved the problem
-of picking an appropriate approximation and also the problem of developing a
-good reference model.
-
-The rest of this case study is demonstrating how to do this on a simple PDE
-model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
+The next section of this case study is demonstes how to apply this workflow on a simple PDE model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
 [`posterior`](https://github.com/stan-dev/posterior) software packages.
 
 # Modeling the Heat Equation
@@ -123,7 +104,7 @@ u(t, 0) &= 1 \\
 u(t, L) &= 0
 \end{align}
 
-All of the computations in this case study are going to be done with a method of
+All of the computations in this example are going to be done with a method of
 lines discretization of this problem and a backwards Euler integrator. The
 appropriate math is described in the online lecture notes
 [ATM 623: Climate Modeling](http://www.atmos.albany.edu/facstaff/brose/classes/ATM623_Spring2015/Notes/Lectures/Lecture16%20--%20Numerical%20methods%20for%20diffusion%20models.html) by Brian E. J. Rose, though any introductory PDE reference should suffice.
@@ -163,7 +144,7 @@ with arguments:
 * `x_meas` - Measurement points
 
 Assume a true thermal diffusivity $K_{true} = 0.05$ and that we measure the
-temperature in the rod at `Nx` points evenly spaced on the rad. We will
+temperature in the rod at `Nx` points evenly spaced on the rod. We will
 generate data under these conditions and try to recover the diffusivity later.
 
 First, let's set up constants and plot a possible solution:
@@ -172,6 +153,7 @@ First, let's set up constants and plot a possible solution:
 dt = 1e-1
 Nx = 5
 L = 1.0
+
 # Pretend we're measuring everywhere so we see the full solution
 x <- seq(-0.1, 1.1, length = 100)
 x_meas <- seq(0.0, L, length = 7)[2:6]
@@ -201,7 +183,7 @@ mu_high_res = solve_pde(dt / 2.0, 2 * Nx, K_true, T_meas, x_meas)
 print(max(abs(mu_high_res - mu_low_res)))
 ```
 
-Is that good or is that bad? That is something that will need determined in the
+Is that good or is that bad? That is something that will need to be determined in the
 context of the application. In this case I am going to generate data with a
 standard deviation of $0.1$, and so I want to get my numerical error quite a
 bit below that before I am comfortable.
@@ -233,7 +215,7 @@ We fit an initial approximate model to our data. All our calculations are
 approximations, and so we refer to this model as a low resolution model, because
 we will check the calculations we did with it in the following steps.
 
-2. Compute a reference solution, $p_{high}$ at these draws
+2. Tune the reference method using these draws
 
 Once we have posterior draws, we need to compute a high resolution reference
 model at each of these points. We will do this by comparing computations with
@@ -242,11 +224,11 @@ increasing the resolution of the reference model until we are happy it is
 accurately representing the dynamics.
 
 3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$
-diagnostic.
+diagnostic
 
 At this stage, we can compute importance weights and the $\hat{k}$ diagnostic
 
-4. Break if $\hat{k} < 0.5$, otherwise raise precision of $p_{low}$ and loop
+4. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1
 
 If the $\hat{k}$ diagnostic is not low enough, it is not possible to do the
 importance sampling correction and we need to recompute our posterior with a
@@ -286,12 +268,11 @@ off. We will diagnose this using our approximation tools though.
 print(fit, pars = c("K", "sigma"))
 ```
 
-## 2. Compute a reference solution, $p_{high}$ at these draws
+## 2. Tune the reference method using the draws
 
 Given our posterior draws, we need to a high resolution reference solution
-$p_{high}$ that works at every point. This does not mean we need $p_{low}$ to
-be accurate. It could be, but now that we have draws from $p_{low}$, we are
-done with it until the importance sampling stage.
+that can accurately solve the system at every point. This does not mean we need
+the method of $M_{low}$ to be accurate. It could be, but now that we have draws from $p_{low}$, we are done with it until the importance sampling stage.
 
 With a simple one parameter model we can plot our approximate errors as a
 function of K (so we know the solution is suitable everywhere).
@@ -328,8 +309,8 @@ for (i in seq_len(num_draws)) {
   mu = solve_pde(dt, Nx, K_draws[i], T_meas, x_meas)
   mu_ref = solve_pde(dt_ref, Nx_ref, K_draws[i], T_meas, x_meas)
 
-  log_lh[i] = sum(dnorm(y, mu, sigma_draws[i], log = TRUE))
-  log_lh_ref[i] = sum(dnorm(y, mu_ref, sigma_draws[i], log = TRUE))
+  log_lh[i] = sum(dnorm(y, mu, sigma_draws[i], log = TRUE)) # ~ p_low
+  log_lh_ref[i] = sum(dnorm(y, mu_ref, sigma_draws[i], log = TRUE)) # ~ p_high
 }
 ```
 
@@ -342,7 +323,7 @@ loo::psis(log_lh_ref - log_lh)
 Oh no! $\hat{k} > 0.5$, and it turns out modeling this process with one timestep
 and one spatial point is not a good idea.
 
-## 4. Break if $\hat{k} < 0.5$, otherwise raise precision of $p_{low}$ and loop
+## 4. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1
 
 It is time to up the precision in the low resolution model:
 
@@ -422,7 +403,6 @@ resampled_df = posterior::resample_draws(draws_df,
 
 print(draws_df %>% posterior::summarize_draws())
 print(resampled_df %>% posterior::summarize_draws())
-```
 ```
 
 # Computation environment
