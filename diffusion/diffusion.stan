@@ -41,7 +41,7 @@ functions {
   vector solve_pde(real dt, int Nx, real K, real T_meas, vector x_meas) {
     real L = 1.0; // length of rod
     real ul = 1.0; // left boundary condition
-    real ur = 1.0; // right boundary condition
+    real ur = 0.0; // right boundary condition
 
     real dx = L / (Nx + 1);
     real K_star = K * dt / (dx^2);
