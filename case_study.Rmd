@@ -7,11 +7,11 @@ output:
   html_document:
     toc: true
     toc_float: true
-    toc_depth: 5
-    theme: yeti
-    highlight: textmate
+    toc_depth: 3
+    highlight: pygments
+    theme: cosmo
+    css: "style.css"
 bibliography: references.bib
-biblio-style: imsmart-nameyear
 ---
 
 ```{r setup, include=FALSE}
@@ -28,11 +28,10 @@ require(ggplot2)
 require(loo)
 require(stats)
 require(posterior)
-
-# The 'posterior' package is required for some computations. It is not in CRAN but can be installed via
-# 
-#  install.packages("posterior", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
 ```
+
+The required `posterior` package is not in CRAN but can be installed via 
+`install.packages("posterior", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))`.
 
 # Introduction
 
@@ -57,9 +56,7 @@ of parameter space" is the posterior itself which is not known beforehand!
 
 And so the problem of validating an approximation in a Bayesian model is
 significantly more complicated than in the classical numerical analysis world.
-The point of this case study is to show how by adding one additional tool 
-Pareto-Smoothed Importance Sampling (PSIS [@yao2018], [@vehtari2019]), we can
-solve this problem.
+The point of this case study is to show how by adding one additional tool, namely Pareto-Smoothed Importance Sampling (PSIS; @yao2018, @vehtari2019), we can solve this problem.
 
 # PSIS and computing a reference model
 
