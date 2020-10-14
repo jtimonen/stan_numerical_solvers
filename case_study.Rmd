@@ -224,7 +224,7 @@ This seems good enough for now, but you might further refine your solution. Now
 to simulate data:
 
 ```{r}
-sigma = 0.01
+sigma = 0.1
 y = solve_pde(dt, Nx, Ktrue, T_meas, x_meas) + rnorm(length(x_meas), 0, sigma)
 ```
 
