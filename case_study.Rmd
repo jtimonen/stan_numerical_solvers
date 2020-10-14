@@ -6,9 +6,12 @@ link-citations: true
 output:
   html_document:
     toc: true
+    toc_float: true
+    toc_depth: 5
     theme: yeti
     highlight: textmate
 bibliography: references.bib
+biblio-style: imsmart-nameyear
 ---
 
 ```{r setup, include=FALSE}
@@ -16,6 +19,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r load, message=FALSE}
+# Requirements
 require(rstan)
 library(tidyverse)
 require(bayesplot)
@@ -23,16 +27,17 @@ require(grDevices)
 require(ggplot2)
 require(loo)
 require(stats)
-
-#install.packages("posterior", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
 require(posterior)
+
+# The 'posterior' package is required for some computations. It is not in CRAN but can be installed via
+# 
+#  install.packages("posterior", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
 ```
 
-## Introduction
+# Introduction
 
 Assume we have a Bayesian model that involves a numeric solution to some
-ODE or PDE. Try as we might, these calculations are often expensive and
-frequently becomes the limiting factors in whatever model they are involved in.
+ODE or PDE (ordinary or partial differential equation). Try as we might, these calculations are often expensive and frequently becomes the limiting factors in whatever model they are involved in.
 
 The simplest things we might do to speed up our calculations are lower the
 timestep, coarsen the discretization, or increase the tolerance of the solvers.
@@ -56,7 +61,7 @@ The point of this case study is to show how by adding one additional tool
 Pareto-Smoothed Importance Sampling (PSIS [@yao2018], [@vehtari2019]), we can
 solve this problem.
 
-## PSIS and computing a reference model
+# PSIS and computing a reference model
 
 To understand the usefulness of PSIS, we must first discuss importance sampling.
 Assume we have two models, $p_{high}$ and $p_{low}$. $p_{high}$ will be an
@@ -104,7 +109,7 @@ The rest of this case study is demonstrating how to do this on a simple PDE
 model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
 [`posterior`](https://github.com/stan-dev/posterior) software packages.
 
-## Modeling the Heat Equation
+# Modeling the Heat Equation
 
 In this example we consider the diffusion of heat ($u(t, x)$) in a rod
 ($x \in [0, L]$). In this hypothetical experiment, the rod is cooled to room
@@ -220,7 +225,7 @@ sigma = 0.1
 y = solve_pde(dt, Nx, K_true, T_meas, x_meas) + rnorm(length(x_meas), 0, sigma)
 ```
 
-### Outline
+## Outline
 
 As we take off our data-generating hats and put on our model-fitting hats, let
 us remind ourselves of our original workflow:
@@ -256,7 +261,7 @@ This is optional. At this point we have a weighted set of posterior draws. It
 is usually easier to work with a set of draws than a set of weighted draws, so
 we can resample our weighted draws using `posterior::resample_draws`.
 
-### 1. Generate draws from $p_{low}$
+## 1. Generate draws from $p_{low}$
 
 Pretend this is measured data and we do not know the true thermal diffusivity.
 Perhaps we are greedy and want this computation to finish quickly and so we
@@ -284,7 +289,7 @@ off. We will diagnose this using our approximation tools though.
 print(fit, pars = c("K", "sigma"))
 ```
 
-### 2. Compute a reference solution, $p_{high}$ at these draws
+## 2. Compute a reference solution, $p_{high}$ at these draws
 
 Given our posterior draws, we need to a high resolution reference solution
 $p_{high}$ that works at every point. This does not mean we need $p_{low}$ to
@@ -315,7 +320,7 @@ plot(K_draws, errors)
 
 The maximum error here seems good enough.
 
-### 3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$ diagnostic.
+## 3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$ diagnostic.
 
 The importance weights are computed on the log scale:
 
@@ -340,7 +345,7 @@ loo::psis(log_lh_ref - log_lh)
 Oh no! $\hat{k} > 0.5$, and it turns out modeling this process with one timestep
 and one spatial point is not a good idea.
 
-### 4. Break if $\hat{k} < 0.5$, otherwise raise precision of $p_{low}$ and loop
+## 4. Break if $\hat{k} < 0.5$, otherwise raise precision of $p_{low}$ and loop
 
 It is time to up the precision in the low resolution model:
 
@@ -404,7 +409,7 @@ loo::psis(log_lh_ref - log_lh)
 
 And this time $\hat{k} < 0.5$, so we are good enough!
 
-### 5. Resample draws using importance weights
+## 5. Resample draws using importance weights
 
 The last step is resampling. We have draws of $K$ and $\sigma$, but they are
 weighted, and usually it is easier to just use a set of draws. Just because it
