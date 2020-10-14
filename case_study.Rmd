@@ -180,7 +180,7 @@ Nx = 5
 L = 1.0
 # Pretend we're measuring everywhere so we see the full solution
 x <- seq(-0.1, 1.1, length = 100)
-x_meas <- c(L / 4, L / 2, 3 * L / 4)
+x_meas <- seq(0.0, L, length = 12)[2:11]
 T_meas <- 1.0
 Ktrue <- 0.05
 
@@ -207,7 +207,7 @@ y_high_res = solve_pde(dt / 2.0, 2 * Nx, Ktrue, T_meas, x_meas)
 print(max(abs(y_high_res - y_low_res)))
 ```
 
-So the maximum error is ```0.014```. Is that good or is that bad? That is
+So the maximum error is ```0.03```. Is that good or is that bad? That is
 something that will need determined in the context of the application. In this
 case I am going to generate data with a standard deviation of $0.01$, and so I
 want to get my numerical error quite a bit below that before I am comfortable.
