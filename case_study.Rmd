@@ -1,7 +1,8 @@
 ---
 title: "Fast and reliable use of numerical solvers"
 date: "`r Sys.Date()`"
-author: "Juho Timonen and Ben Bales" 
+author: "Juho Timonen and Ben Bales"
+link-citations: true
 output:
   html_document:
     toc: true
@@ -22,6 +23,9 @@ require(grDevices)
 require(ggplot2)
 require(loo)
 require(stats)
+
+#install.packages("posterior", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+require(posterior)
 ```
 
 ## Introduction

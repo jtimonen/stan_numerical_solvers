@@ -1,0 +1,147 @@
+---
+title: "SIR example"
+date: "`r Sys.Date()`"
+link-citations: true
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: yeti
+    highlight: textmate
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load, message=FALSE}
+require(rstan)
+library(tidyverse)
+require(bayesplot)
+require(grDevices)
+require(ggplot2)
+require(loo)
+require(stats)
+set.seed(123)
+```
+
+## Introduction
+
+See [this](https://mc-stan.org/users/documentation/case-studies/boarding_school_case_study.html).
+
+\begin{align}
+a &= b
+\end{align}
+
+
+```{r, message=FALSE, results=FALSE}
+model <- stan_model("sir.stan")
+expose_stan_functions(model)
+
+# Solve the SIR system
+solve_sir <- function(y0, ts, theta, N, rtol, atol, max_steps){
+  x_r <- numeric(0)
+  y_hat <- stan_solve_sir(y0, ts, theta, x_r, N, rtol, atol, max_steps)
+  L <- length(y_hat)
+  y_hat <- unlist(y_hat)
+  n <- length(y_hat)
+  y_hat <- matrix(y_hat, L, n/L, byrow = TRUE)
+  return(y_hat)
+}
+```
+
+Setup
+```{r}
+n_days <- 16           # num. of measurement days (not inc. Day 0)
+N <- 1000              # population size
+I0 <- 20               # num. of infected on Day 0
+y0 <- c(N - I0, I0, 0) # S, I, R on Day 0
+ts <- seq_len(n_days)  # measurement times
+theta <- c(1,0.2)      # true parameter values
+```
+
+We use these control parameters
+
+```{r}
+rtol <- 1e-10
+atol <- 1e-10
+max_steps <- 1e8
+
+# Plot
+plot_sir <- function(y0, y_hat, ts) {
+  yyy <- rbind(y0, y_hat)
+  ttt <- c(0.0, ts)
+  y <- as.vector(yyy)
+  day <- rep(ttt, 3)
+  comp <- rep( c("S", "I", "R"), each = length(ttt))
+  df <- data.frame(day, y, as.factor(comp))
+  colnames(df) <- c("Day", "y", "Compartment")
+  aes <- aes_string(x = "Day", y = "y", group = "Compartment",
+                    color = "Compartment")
+  plt <- ggplot(df, aes) + geom_line(lwd = 1) + geom_point()
+  return(plt)
+}
+
+```
+
+Solve and plot:
+
+```{r, fig.width=7, fig.height=3.5}
+y_hat <- solve_sir(y0, ts, theta, N, rtol, atol, max_steps)
+plot_sir(y0, y_hat, ts)
+```
+
+Create noisy data and plot:
+```{r, fig.width=7, fig.height=4.8}
+phi <- 5 # true phi
+I_mean <- y_hat[,2]
+I_data <- stats::rnbinom(length(ts), mu = I_mean, size = phi)
+plot(ts, I_data, pch = 16, col = "gray30", xlab = "Day", ylab = '#Infected')
+lines(ts, I_mean, col = "firebrick3")
+```
+
+Create stan data and fit.
+```{r, fig.width=7, fig.height=4.5}
+stan_data <- list(
+  n_days = length(ts),
+  y0 = y0,
+  ts = ts,
+  N = N,
+  cases = I_data,
+  rtol = 1e-5,
+  atol = 1e-5,
+  max_steps = 1e6
+)
+
+fit <- sampling(model, stan_data, cores = 4)
+```
+
+Studying results
+```{r, fig.width=7, fig.height=4.5}
+pars <- c("beta", "gamma", "phi")
+draws <- rstan::extract(fit, pars = pars)
+num_draws <- length(draws$phi)
+print(fit, pars = pars)
+```
+
+
+Plotting
+```{r, fig.width=7, fig.height=5.4}
+Y_hat <- rstan::extract(fit, pars = "y_hat")$y_hat
+num_draws <- length(draws$phi)
+col1 <- rgb(0,0,1,0.2)
+col2 <- rgb(1,0,0,0.2)
+col3 <- rgb(0,1,0,0.2)
+
+# Show solution for some draws
+idx_draws <- sample.int(num_draws, 100)
+plot(ts, I_data, ylim=c(0,N), ylab = "#People", xlab = "Day")
+for (j in idx_draws) {
+  Yj <- Y_hat[j,,]
+  lines(ts, Yj[,1], col = col1)
+  lines(ts, Yj[,2], col = col2)
+  lines(ts, Yj[,3], col = col3)
+}
+points(ts, I_data, pch = 16)
+```
+
