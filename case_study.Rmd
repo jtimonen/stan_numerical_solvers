@@ -132,130 +132,104 @@ lines discretization of this problem and a backwards Euler integrator. The
 appropriate math is described in the online lecture notes
 [ATM 623: Climate Modeling](http://www.atmos.albany.edu/facstaff/brose/classes/ATM623_Spring2015/Notes/Lectures/Lecture16%20--%20Numerical%20methods%20for%20diffusion%20models.html) by Brian E. J. Rose, though any introductory PDE reference should suffice.
 
-For convenience we have defined some Stan functions that solve our problem
-given a timestep, a spatial discretization, a hypothetical diffusivity, etc.
+For convenience we have defined a Stan function that solve our problem
+given a timestep, a spatial discretization, a hypothetical diffusivity, a
+measurement time, and a list of measurement points and returns the predicted
+temperature at each of those measurement points.
 
-```{r expose, results=FALSE, message=FALSE}
+```{r}
 model <- stan_model("diffusion/diffusion.stan")
 expose_stan_functions(model)
 ```
 
-The function signature is:
+```{r}
+dt = 1.0
+Nx = 10
+K = 1e-1
+T_meas = 0.1
+x_meas = c(-1.0, 0.01, 0.5, 0.99, 1.0, 2.0)
+
+solve_pde(dt, Nx, K, T_meas, x_meas)
+```
+
+The function has the signature:
 
 ```
-vector stan_be(u0, dt, dx, Tmax, K, ul, ur)
+vector solve_pde(dt, Nx, K, T_meas, x_meas)
 ```
 
-With arguments:
+with arguments:
 
-* `u0` - Initial condition
 * `dt` - Timestep
-* `dx` - Spatial discretization
-* `Tmax` - Time to simulate to
+* `Nx` - Number of interior points in spatial discretization
 * `K` - Thermal diffusivity
-* `ul` - Left boundary condition
-* `ur` - Right boundary condition
+* `T_meas` - Measurement time
+* `x_meas` - Measurement points
 
-Let us pick a diffusivity $K_{true} = 0.05$ and assume that we measure the
-temperature in the rod at $x = \frac{1}{4} L$, $x = \frac{1}{2} L$, and
-$x = \frac{3}{4} L$. We will generate data under these conditions and try to
-recover the diffusivity at the inference stage.
+Assume a true thermal diffusivity $K_{true} = 0.05$ and that we measure the
+temperature in the rod at
+$x_{meas} = \left [ \frac{1}{4} L, \frac{1}{2} L, \frac{3}{4} L \right ]$. We
+will generate data under these conditions and try to recover the diffusivity
+later.
 
-Our first job is to select a `dt` and `dx` for the reference calculation. We
-will do this by manually selecting a `dt` and `dx` that are accurate enough.
-
-First, let's set up constants and plot a solution:
+First, let's set up constants and plot a reference solution:
 
 ```{r diffusion, fig.width = 6.75, fig.height = 5}
-L <- 1.0 # Rod length
-dt <- 0.1
-dx <- 0.1
-xsim <- seq(dx, L - dx, by = dx)
-u0 <- rep(0, length(xsim))
-Tmax <- 1.0
+dt = 1e-1
+Nx = 5
+L = 1.0
+# Pretend we're measuring everywhere so we see the full solution
+x <- seq(-0.1, 1.1, length = 100)
+x_meas <- c(L / 4, L / 2, 3 * L / 4)
+T_meas <- 1.0
 Ktrue <- 0.05
-ul <- 1.0
-ur <- 1.0
-xmeas <- c(L / 4, L / 2, 3 * L / 4)
 
-uT = stan_be(u0, dt, dx, Tmax, Ktrue, ul, ur)
+u0 = solve_pde(dt, Nx, Ktrue, 0.0, x)
+uT = solve_pde(dt, Nx, Ktrue, T_meas, x)
 
-tibble(x = c(0.0, xsim, L),
-       uT = c(ul, uT, ur)) %>%
-  ggplot(aes(x, uT)) +
-  geom_line() +
-  geom_point() +
-  ylim(0.0, 1.0) +
-  xlim(0.0, 1.0)
+y_low_res = solve_pde(dt, Nx, Ktrue, T_meas, x_meas)
+
+plot(x, u0, type = 'l')
+lines(x, uT, col = 'red')
+points(x_meas, y_low_res, col = 'blue')
 ```
 
-To determine a suitable timestep we can look at the maximum absolute error at
-our measurement points between a solution computed with timestep $\Delta t$ and
-a solution computed with timestep $\Delta t / 2$ as $\Delta t \rightarrow 0$.
+The blue points in the solution are the ones we compare to experiment (these
+are the parts of the solution we care most about). Our first question will be:
+is this solution accurate enough at the blue points? The simple way to check
+this is by computing the solution at the blue points at a higher higher
+space/time resolution and checking the difference.
+
+Let's double the space and time resolution:
 
 ```{r}
-log2_N_max_steps = 16
-solutions = list()
-dts = rep(0, log2_N_max_steps)
-for(log2_N_steps in 1:log2_N_max_steps) {
-  steps = 2^log2_N_steps
-  dt = Tmax / steps
-  
-  uT <- stan_be(u0, dt, dx, Tmax, Ktrue, ul, ur)
-  solutions[[log2_N_steps]] <- approx(xsim, uT, xmeas)$y
-  dts[log2_N_steps] <- dt
-}
-
-errors = c()
-for(i in 1:(length(dts) - 1)) {
-  errors = c(errors, max(abs(solutions[[i + 1]] - solutions[[i]])))
-}
-
-tibble(dt = dts[1:(length(dts) - 1)],
-       error = errors) %>%
-  ggplot(aes(dt, error)) +
-  geom_line() +
-  scale_y_log10() +
-  scale_x_log10()
+y_high_res = solve_pde(dt / 2.0, 2 * Nx, Ktrue, T_meas, x_meas)
+print(max(abs(y_high_res - y_low_res)))
 ```
-This means that with `dt = 0.0001`, the maximum error between this an a more
-precise solution is $O(10^{-5})$. We could easily push it lower, but let's say
-this is good enough for now.
+
+So the maximum error is ```0.014```. Is that good or is that bad? That is
+something that will need determined in the context of the application. In this
+case I am going to generate data with a standard deviation of $0.01$, and so I
+want to get my numerical error quite a bit below that before I am comfortable.
 
 ```{r}
-log2_N_max_steps = 12
-dt <- 0.1
-solutions = list()
-dxs = rep(0, log2_N_max_steps)
-for(log2_N_steps in 1:log2_N_max_steps) {
-  steps = 2^log2_N_steps
-  dx = L / (steps + 1)
-  xsim <- seq(dx, L - dx, by = dx)
-  u0 <- rep(0, length(xsim))
-  
-  uT <- stan_be(u0, dt, dx, Tmax, Ktrue, ul, ur)
-  solutions[[log2_N_steps]] <- approx(xsim, uT, xmeas, rule = 2)$y
-  dxs[log2_N_steps] <- dx
-}
-
-errors = c()
-for(i in 1:(length(dxs) - 1)) {
-  errors = c(errors, max(abs(solutions[[i + 1]] - solutions[[i]])))
-}
-
-tibble(dx = dxs[1:(length(dxs) - 1)],
-       error = errors) %>%
-  ggplot(aes(dx, error)) +
-  geom_line() +
-  scale_y_log10() +
-  scale_x_log10()
+dt = 0.01
+Nx = 40
+y_low_res = solve_pde(dt, Nx, Ktrue, T_meas, x_meas)
+y_high_res = solve_pde(dt / 2.0, Nx * 2, Ktrue, T_meas, x_meas)
+print(max(abs(y_high_res - y_low_res)))
 ```
-For a very modest `dx`, the maximum absolute error we see between two
-approximations is $O(10^{-5})$.
 
-Now, the primary point of that very boring exercise was to generate data tha
-we can fit with our statistical model. The secondary point though, was that we
-can 
+This seems good enough for now, but you might further refine your solution. Now
+to simulate data:
+
+```{r}
+sigma = 0.01
+y = solve_pde(dt, Nx, Ktrue, T_meas, x_meas) + rnorm(length(x_meas), 0, sigma)
+```
+
+## Inference begins
+
 
 ```{r}
 # Plot both
@@ -266,16 +240,28 @@ main <- paste0("Solution with dt=", dt, ", dx=", dx, ", K=", K_true)
 plot_u(x_grid, U, t, cols, main)
 ```
 
-Now, if you're familiar with diffusion equations you might say, 'Oh, you
-fools, you're not even trying to control your error due to your timestep or your spatial discretization.'
+## Fitting $p_{low}$
 
-Since you are this far in the case study, we will admit, yes, this is not the best way solve the problem. We did it in a pinch because it was easier to do it
-this way than worry about an adaptive timestep/adaptive meshsize method.
-After all, we are solving a 1D diffusion. We can just make a finer
-discretization or use smaller timesteps and see how the error between successive
-approximations gets smaller.
+So now we have data, we can conveniently forget that we were the ones that
+generated this data and we can go about fitting it.
 
-### 3.3 Simulating data
+Pretend we do not know the time and space resolution of the solver used to
+generate the data. Perhaps we are greedy and start to fit this with a coarse
+discretization:
+
+```{r}
+dt = 0.1
+Nx = 5
+
+fit <- sampling(model,
+            data = list(dt = dt,
+                        Nx = Nx,
+                        N_meas = length(x_meas),
+                        T_meas = T_meas,
+                        x_meas = x_meas,
+                        y = y),
+            cores = 4)
+```
 
 We generate data $y$ by adding noise to $u(t=T,x)$.
 

@@ -38,40 +38,92 @@ functions {
   // K, diffusion constant
   // ul, left boundary condition
   // ur, right boundary condition
-  vector stan_be(vector u_init, real dt, real dx, real T_max, real K, real ul, real ur){
-    int Nx = num_elements(u_init);
-    vector[Nx] u = u_init;
-    real K_star = K * dt / (dx^2); // this value defines some properties
+  vector solve_pde(real dt, int Nx, real K, real T_meas, vector x_meas) {
+    real L = 1.0; // length of rod
+    real ul = 1.0; // left boundary condition
+    real ur = 1.0; // right boundary condition
+
+    real dx = L / (Nx + 1);
+    real K_star = K * dt / (dx^2);
     real t = 0.0;
-    
+
+    vector[Nx] u = rep_vector(0, Nx);
+    vector[Nx] u_prev = u;
+
+    vector[rows(x_meas)] solution;
+
     // Create the diagonal of the tridiagonal matrix A
     vector[Nx] A_diag = rep_vector(1.0 + 2.0 * K_star, Nx);
-  
+
     // Iterate time step
-    while(t < T_max) {
+    while(t < T_meas) {
       vector[Nx] b = u;
+      u_prev = u;
+  
       b[1] += ul * K_star;
       b[Nx] += ur * K_star;
       // Update u and t
       u = stan_solve_tridiag_be(-K_star, A_diag, b);
       t = t + dt;
     }
-    return(u);
+
+    // Use linear interpolation to get solution at T_max not a multiple of dt
+    if(T_meas < t) {
+      real alpha = (t - T_meas) / dt;
+      u = alpha * u_prev + (1.0 - alpha) * u;
+    }
+    
+    // Use linear interpolation to get solution at measurement points
+    {
+      int i = 1;
+      int j = 0;
+      while(i <= rows(x_meas)) {
+        if(x_meas[i] < 0.0) {
+          solution[i] = ul;
+          i += 1;
+        } else if(x_meas[i] >= L) {
+          solution[i] = ur;
+          i += 1;
+        } else if(j == 0) {
+          if(x_meas[i] < dx) {
+            real alpha = (dx - x_meas[i]) / dx;
+            solution[i] = alpha * ul + (1.0 - alpha) * u[1];
+            i += 1;
+          } else {
+            j += 1;
+          }
+        } else if(j + 1 == Nx + 1) {
+          if(x_meas[i] < L) {
+            real alpha = (L - x_meas[i]) / dx;
+            solution[i] = alpha * u[Nx] + (1.0 - alpha) * ur;
+            i += 1;
+          } else {
+            j += 1;
+          }
+        } else {
+          if(x_meas[i] >= j * dx && x_meas[i] < (j + 1) * dx) {
+            real alpha = ((j + 1) * dx - x_meas[i]) / dx;
+            solution[i] = alpha * u[j] + (1.0 - alpha) * u[j + 1];
+            i += 1;
+          } else {
+            j += 1;
+          }
+        }
+      }
+    }
+
+    return(solution);
   }
 }
 
 data {
-  int N;
-  vector[N] x;
-  vector[N] y;
-  real T;
   real dt;
-  real ul;
-  real ur;
-}
-
-transformed data {
-  real dx = x[2] - x[1];
+  int Nx;
+  int N_meas;
+  real T_meas;
+  vector[N_meas] x_meas;
+  
+  vector[N_meas] y;
 }
 
 parameters {
@@ -80,15 +132,11 @@ parameters {
 }
 
 transformed parameters {
-  vector[N] u = rep_vector(0, N);
-  real t = 0.0;
-  
-  // Solve u(t=T,x) using backward Euler method
-  u = stan_be(u, dt, dx, T, K, ul, ur);
+  vector[N_meas] mu = solve_pde(dt, Nx, K, T_meas, x_meas);
 }
 
 model {
   sigma ~ normal(0, 1.0);
   K ~ normal(0, 1.0);
-  y ~ normal(u, sigma);
+  y ~ normal(mu, sigma);
 }
