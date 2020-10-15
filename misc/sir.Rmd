@@ -4,10 +4,12 @@ date: "`r Sys.Date()`"
 link-citations: true
 output:
   html_document:
+    number_sections: true
     toc: true
     toc_float: true
-    theme: yeti
-    highlight: textmate
+    toc_depth: 4
+    highlight: pygments
+    theme: cosmo
 ---
 
 ```{r setup, include=FALSE}

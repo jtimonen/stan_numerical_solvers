@@ -5,9 +5,10 @@ author: "Juho Timonen and Ben Bales"
 link-citations: true
 output:
   html_document:
+    number_sections: true
     toc: true
     toc_float: true
-    toc_depth: 3
+    toc_depth: 4
     highlight: pygments
     theme: cosmo
     css: "style.css"
@@ -28,6 +29,7 @@ require(ggplot2)
 require(loo)
 require(stats)
 require(posterior)
+set.seed(123)
 ```
 
 The required `posterior` package is not in CRAN but can be installed via 
@@ -57,8 +59,8 @@ The point of this case study is to show how by adding one additional tool, namel
 
 # Workflow
 
-Assume we have two models, $M_{high}$ and $M_{low}$.
-These are otherwise the same model, except that $M_{low}$ uses a cheaper and less accurate numerical methods (or just looser tolerances) to compute the required ODE or PDE solutions. Therefore they have different posteriors, $p_{high}$ and $p_{low}$, respectively.
+Assume we have two models, $M_{low}$ and $M_{high}$.
+These are otherwise the same model, except that $M_{low}$ uses a cheaper and less accurate numerical methods (or just looser tolerances) to compute the required ODE or PDE solutions. Therefore they have different posteriors, $p_{low}$ and $p_{high}$, respectively.
 
 To understand how PSIS comes into play, we must first discuss importance sampling. If we want to compute expectations with the high precision model, we can take draws from the low precision models and reweight these according to the
 importance weights $\frac{p_{high}}{p_{low}}$. If these models are too
@@ -85,11 +87,12 @@ analysis can be used here.
 5. Resample draws using importance weights.
 :::
 
-The next section of this case study is demonstes how to apply this workflow on a simple PDE model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
+The next section of this case study demonstrates how to apply this workflow on a simple PDE model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
 [`posterior`](https://github.com/stan-dev/posterior) software packages.
 
-# Modeling the Heat Equation
+# Heat Equation Example
 
+## Problem definition
 In this example we consider the diffusion of heat ($u(t, x)$) in a rod
 ($x \in [0, L]$). In this hypothetical experiment, the rod is cooled to room
 temperature and then heated from the left side. After some time the temperature
@@ -105,6 +108,8 @@ u(t, 0) &= 1 \\
 u(t, L) &= 0
 \end{align}
 
+
+## Solving the system
 All of the computations in this example are going to be done with a method of
 lines discretization of this problem and a backwards Euler integrator. The
 appropriate math is described in the online lecture notes
@@ -116,7 +121,7 @@ measurement time, and a list of measurement points and returns the predicted
 temperature at each of those measurement points.
 
 ```{r}
-model <- stan_model("diffusion/diffusion.stan")
+model = stan_model("diffusion/diffusion.stan")
 expose_stan_functions(model)
 ```
 
@@ -156,45 +161,50 @@ Nx = 5
 L = 1.0
 
 # Pretend we're measuring everywhere so we see the full solution
-x <- seq(-0.1, 1.1, length = 100)
-x_meas <- seq(0.0, L, length = 7)[2:6]
-T_meas <- 1.0
-K_true <- 0.025
+x = seq(-0.1, 1.1, length = 100)
+x_meas = seq(0.0, L, length = 7)[2:6]
+T_meas = 1.0
+K_true = 0.025
 
 u0 = solve_pde(dt, Nx, K_true, 0.0, x)
 uT = solve_pde(dt, Nx, K_true, T_meas, x)
-
-mu_low_res = solve_pde(dt, Nx, K_true, T_meas, x_meas)
+mu = solve_pde(dt, Nx, K_true, T_meas, x_meas)
 
 plot(x, u0, type = 'l')
 lines(x, uT, col = 'firebrick')
-points(x_meas, mu_low_res, col = '#1864de')
+points(x_meas, mu, col = '#1864de')
 ```
 
-The blue points in the solution are the ones we compare to experiment (these
-are the parts of the solution we care most about). Our first question will be:
-is this solution accurate enough at the blue points? The simple way to check
-this is by computing the solution at the blue points at a higher higher
-space/time resolution and checking the difference.
+The blue points in the solution are the ones we compare to (these
+are the parts of the solution we care most about). *TODO: this figure probably needs more explaining.*
 
-Let's double the space and time resolution:
+## Reliability of the solution
+
+Our first question will be: is this solution accurate enough at the blue points? The simple way to check this is by computing the solution at the blue points at a higher space/time resolution and checking the difference.
+
+We define a function that we can use for determining reliability, given a
+fixed parameter value $K$. In our approach we double the space and time resolution and check the maximum absolute error.
 
 ```{r}
-mu_high_res = solve_pde(dt / 2.0, 2 * Nx, K_true, T_meas, x_meas)
-print(max(abs(mu_high_res - mu_low_res)))
+# Function to help determine if dt and Nx are small enough at given K
+check_reliability = function(dt, Nx, K, T_meas, x_meas) {
+  mu = solve_pde(dt, Nx, K, T_meas, x_meas)
+  mu_more_accurate = solve_pde(dt / 2.0, 2 * Nx, K, T_meas, x_meas)
+  max_abs_err = max(abs(mu_more_accurate - mu))
+  return(max_abs_err)
+}
+
+# Check at K = K_true
+check_reliability(dt, Nx, K_true, T_meas, x_meas)
 ```
 
-Is that good or is that bad? That is something that will need to be determined in the
-context of the application. In this case I am going to generate data with a
-standard deviation of $0.1$, and so I want to get my numerical error quite a
+Is that good or is that bad? That is something that will need to be determined in the context of the application. In this case I am going to generate data with a standard deviation of $0.1$, and so I want to get my numerical error quite a
 bit below that before I am comfortable.
 
 ```{r}
 dt = 0.01
 Nx = 40
-mu_low_res = solve_pde(dt, Nx, K_true, T_meas, x_meas)
-mu_high_res = solve_pde(dt / 2.0, Nx * 2, K_true, T_meas, x_meas)
-print(max(abs(mu_high_res - mu_low_res)))
+check_reliability(dt, Nx, K_true, T_meas, x_meas)
 ```
 
 This seems good enough for now, but you might further refine your solution. Now
@@ -202,10 +212,13 @@ to simulate data:
 
 ```{r}
 sigma = 0.1
-y = solve_pde(dt, Nx, K_true, T_meas, x_meas) + rnorm(length(x_meas), 0, sigma)
+noise = rnorm(length(x_meas), 0, sigma)
+y = solve_pde(dt, Nx, K_true, T_meas, x_meas) + noise
 ```
 
-## Step 1: Generate draws from $p_{low}$
+## Applying the workflow
+
+### Generating draws from $p_{low}$
 
 We now take off our data-generating hats and put on our model-fitting hats. We fit an initial approximate model to our data. All our calculations are
 approximations, and so we refer to this model as a low resolution model, because
@@ -214,17 +227,16 @@ we will check the calculations we did with it in the following steps.
 Pretend `x_meas` is measured data and we do not know the true thermal diffusivity. Perhaps we are greedy and want this computation to finish quickly and so we fit this with a very aggressive approximation (one timestep, one spatial point):
 
 ```{r}
-dt = 1.0
-Nx = 1
-
-fit <- sampling(model,
-            data = list(dt = dt,
-                        Nx = Nx,
-                        N_meas = length(x_meas),
-                        T_meas = T_meas,
-                        x_meas = x_meas,
-                        y = y),
-            cores = 4)
+dt_low = 1.0
+Nx_low = 1
+fit = rstan::sampling(model,
+                data = list(dt = dt_low,
+                            Nx = Nx_low,
+                            N_meas = length(x_meas),
+                            T_meas = T_meas,
+                            x_meas = x_meas,
+                            y = y),
+                cores = 4)
 ```
 
 Looking at the posterior it appears everything was successful and the chains
@@ -235,83 +247,94 @@ off. We will diagnose this using our approximation tools though.
 print(fit, pars = c("K", "sigma"))
 ```
 
-## Step 2: Tuning the reference method
+### Tuning the reference method
 
-Once we have posterior draws, we need to compute a high resolution reference
-model at each of these points. This does not mean we need
-the method of $M_{low}$ to be accurate. It could be, but now that we have draws from $p_{low}$, we are done with it until the importance sampling stage.
+We tune the high resolution method the same way as we did when generating the data, except that now we need to check the maximum absolute error (MAE) for all
+parameter values that we sampled.
 
-We tune the high resolution method by solving the PDE at every posterior draw and increasing its resolution until we are happy it is
-accurately representing the dynamics.
+```{r}
+dt_high = 0.005
+Nx_high = 80
+
+K_draws = rstan::extract(fit, "K")$K
+sigma_draws = rstan::extract(fit, "sigma")$sigma
+num_draws = length(K_draws)
+
+# Compute differences
+errors = c()
+for (i in 1:num_draws) {
+  mae = check_reliability(dt_high, Nx_high, K_draws[i], T_meas, x_meas)
+  errors = c(errors, mae)
+}
+```
 
 With a simple one parameter model we can plot our approximate errors as a
 function of K (so we know the solution is suitable everywhere).
 
 ```{r}
-dt_ref = 0.005
-Nx_ref = 80
-K_draws = rstan::extract(fit, "K")$K
-sigma_draws = rstan::extract(fit, "sigma")$sigma
-num_draws = length(K_draws)
-
-max_abs_error = 0.0
-errors = c()
-for(i in 1:num_draws) {
-  K = K_draws[i]
-  mu_low_res = solve_pde(dt_ref, Nx_ref, K, T_meas, x_meas)
-  mu_high_res = solve_pde(dt_ref / 2.0, Nx_ref * 2, K, T_meas, x_meas)
-  errors = c(errors, max(abs(mu_high_res - mu_low_res)))
+error_plot = function(K, mae) {
+  ylab = "Max. absolute error"
+  plot(K, mae, pch = 4, col = "#1864de", xlab = "K", ylab = ylab)
 }
-
-plot(K_draws, errors)
+error_plot(K_draws, errors)
 ```
 
-The maximum error here seems good enough.
+The errors here seem low enough.
 
-## Step 3: Computing importance weights.
+### Computing importance weights
 
-The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log scale:
+The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log
+scale. The priors cancel out so we only need to work with log likelihoods.
 
 ```{r}
-log_lh = rep(0, num_draws)
-log_lh_ref = rep(0, num_draws)
-for (i in seq_len(num_draws)) {
-  mu = solve_pde(dt, Nx, K_draws[i], T_meas, x_meas)
-  mu_ref = solve_pde(dt_ref, Nx_ref, K_draws[i], T_meas, x_meas)
-
-  log_lh[i] = sum(dnorm(y, mu, sigma_draws[i], log = TRUE)) # ~ p_low
-  log_lh_ref[i] = sum(dnorm(y, mu_ref, sigma_draws[i], log = TRUE)) # ~ p_high
+# Define a function
+compute_log_weights = function(
+  dt_low, Nx_low, dt_high, Nx_high, 
+  K_draws, T_meas, x_meas, y_meas)
+{
+  log_lh_low = rep(0, num_draws)
+  log_lh_high = rep(0, num_draws)
+  for (i in seq_len(num_draws)) {
+    mu_low = solve_pde(dt_low, Nx_low, K_draws[i], T_meas, x_meas)
+    mu_high = solve_pde(dt_high, Nx_high, K_draws[i], T_meas, x_meas)
+    log_lh_low[i] = sum(dnorm(y_meas, mu_low, sigma_draws[i], log = TRUE))
+    log_lh_high[i] = sum(dnorm(y_meas, mu_high, sigma_draws[i], log = TRUE))
+  }
+  log_weights = log_lh_high - log_lh_low
+  return(log_weights)
 }
+
+# Apply function
+log_weights = compute_log_weights(dt_low, Nx_low, dt_high, Nx_high,
+                                  K_draws, T_meas, x_meas, y)
 ```
 
-## Step 4: Computing $\hat{k}$ diagnostic
+### Computing $\hat{k}$ diagnostic
 
 If the $\hat{k}$ diagnostic is not low enough, it is not possible to do the
 importance sampling correction and we need to recompute our posterior with a
 higher resolution model. The `loo` package computes the $\hat{k}$ diagnostic for us:
 
 ```{r pareto, fig.width=6, fig.height=4.5}
-loo::psis(log_lh_ref - log_lh)
+loo::psis(log_weights)
 ```
 
 Oh no! $\hat{k} > 0.5$, and it turns out modeling this process with one timestep
 and one spatial point is not a good idea. This means we need to up the precision in the low resolution model and go back to *Step 1*.
 
-## Repeating the loop
+### Repeating the loop
 
-### Step 1
 ```{r}
-dt = 0.1
-Nx = 10
-
-fit <- sampling(model,
-            data = list(dt = dt,
-                        Nx = Nx,
-                        N_meas = length(x_meas),
-                        T_meas = T_meas,
-                        x_meas = x_meas,
-                        y = y),
-            cores = 4)
+dt_low = 0.1
+Nx_low = 10
+fit = rstan::sampling(model,
+                data = list(dt = dt_low,
+                            Nx = Nx_low,
+                            N_meas = length(x_meas),
+                            T_meas = T_meas,
+                            x_meas = x_meas,
+                            y = y),
+                cores = 4)
 ```
 
 Again, we can check our regular diagnostics:
@@ -320,50 +343,38 @@ Again, we can check our regular diagnostics:
 print(fit, pars = c("K", "sigma"))
 ```
 
-### Step 2
-
 Again, we verify our reference solution:
 
 ```{r}
-dt_ref = 0.005
-Nx_ref = 80
+dt_high = 0.005
+Nx_high = 80
 K_draws = rstan::extract(fit, "K")$K
 sigma_draws = rstan::extract(fit, "sigma")$sigma
 num_draws = length(K_draws)
 
-max_abs_error = 0.0
+# Compute differences
 errors = c()
-for(i in 1:num_draws) {
-  K = K_draws[i]
-  mu_low_res = solve_pde(dt_ref, Nx_ref, K, T_meas, x_meas)
-  mu_high_res = solve_pde(dt_ref / 2.0, Nx_ref * 2, K, T_meas, x_meas)
-  errors = c(errors, max(abs(mu_high_res - mu_low_res)))
+for (i in 1:num_draws) {
+  mae = check_reliability(dt_high, Nx_high, K_draws[i], T_meas, x_meas)
+  errors = c(errors, mae)
 }
 
-plot(K_draws, errors)
+# Plot
+error_plot(K_draws, errors)
 ```
 
-### Steps 3 and 4
 And again we can compute the importance ratios and run the PSIS diagnostics on
 them:
 
 ```{r}
-log_lh = rep(0, num_draws)
-log_lh_ref = rep(0, num_draws)
-for (i in seq_len(num_draws)) {
-  mu = solve_pde(dt, Nx, K_draws[i], T_meas, x_meas)
-  mu_ref = solve_pde(dt_ref, Nx_ref, K_draws[i], T_meas, x_meas)
-
-  log_lh[i] = sum(dnorm(y, mu, sigma_draws[i], log = TRUE))
-  log_lh_ref[i] = sum(dnorm(y, mu_ref, sigma_draws[i], log = TRUE))
-}
-
-loo::psis(log_lh_ref - log_lh)
+log_weights = compute_log_weights(dt_low, Nx_low, dt_high, Nx_high,
+                                  K_draws, T_meas, x_meas, y)
+loo::psis(log_weights)
 ```
 
 And this time $\hat{k} < 0.5$, so we are good enough!
 
-## Step 5: Resampling draws
+### Resampling draws
 
 This is optional. At this point we have a weighted set of posterior draws. It
 is usually easier to work with a set of draws than a set of weighted draws, so
@@ -377,9 +388,11 @@ the results are not much different, but it is relatively trivial to do a
 resampling with the `posterior` package:
 
 ```{r}
-draws_df = posterior::as_draws_df(rstan::extract(fit, c("K", "sigma")))
+w = exp(log_weights)
+draws_list = rstan::extract(fit, c("K", "sigma"))
+draws_df = posterior::as_draws_df(draws_list)
 resampled_df = posterior::resample_draws(draws_df,
-                                         weights = exp(log_lh_ref - log_lh))
+                                         weights = w)
 
 print(draws_df %>% posterior::summarize_draws())
 print(resampled_df %>% posterior::summarize_draws())
