@@ -25,20 +25,28 @@ require(stats)
 set.seed(123)
 ```
 
-## Introduction
+# SIR example
 
-See [this](https://mc-stan.org/users/documentation/case-studies/boarding_school_case_study.html).
+Here we study a simple SIR model of the spreading of an infectious disease.
+This model is detailed in more detail in
+[this case study](https://mc-stan.org/users/documentation/case-studies/boarding_school_case_study.html).
+The dynamics of of the susceptible (S), infected (I) and recovered
+(R) compartments are determined by the ODE system
 
 \begin{align}
-a &= b
+    \frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N} \\
+    \frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N} - \gamma \cdot I \\
+    \frac{dR}{dt} &=  \gamma \cdot I
 \end{align}
 
+where $\beta, \gamma > 0$ are unknown parameters.
 
 ```{r, message=FALSE, results=FALSE}
 model <- stan_model("sir.stan")
 expose_stan_functions(model)
 
-# Solve the SIR system
+# Solve the SIR system and format result array
+# - theta = [beta, gamma]
 solve_sir <- function(y0, ts, theta, N, rtol, atol, max_steps){
   x_r <- numeric(0)
   y_hat <- stan_solve_sir(y0, ts, theta, x_r, N, rtol, atol, max_steps)

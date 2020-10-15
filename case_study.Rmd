@@ -75,14 +75,15 @@ completely, in all parts of the parameter space. This is required because for ex
 
 We propose a workflow, which neatly solves not only the problem of picking an appropriate approximation, but also the problem of developing a good reference model.
 
+::: {#workflow .box}
 1. Generate draws from $p_{low}$.
 2. Tune the numerical method in $M_{high}$ so that it is reliable at
 these draws. All application specific knowledge and classical numerical
-methods can be used here.
-3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$
-diagnostic.
-4. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1.
+analysis can be used here.
+3. Compute importance weights $\frac{p_{high}}{p_{low}}$
+4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1.
 5. Resample draws using importance weights.
+:::
 
 The next section of this case study is demonstes how to apply this workflow on a simple PDE model using Stan in combination with the [`loo`](https://mc-stan.org/loo) and
 [`posterior`](https://github.com/stan-dev/posterior) software packages.
@@ -166,8 +167,8 @@ uT = solve_pde(dt, Nx, K_true, T_meas, x)
 mu_low_res = solve_pde(dt, Nx, K_true, T_meas, x_meas)
 
 plot(x, u0, type = 'l')
-lines(x, uT, col = 'red')
-points(x_meas, mu_low_res, col = 'blue')
+lines(x, uT, col = 'firebrick')
+points(x_meas, mu_low_res, col = '#1864de')
 ```
 
 The blue points in the solution are the ones we compare to experiment (these
@@ -204,47 +205,13 @@ sigma = 0.1
 y = solve_pde(dt, Nx, K_true, T_meas, x_meas) + rnorm(length(x_meas), 0, sigma)
 ```
 
-## Outline
+## Step 1: Generate draws from $p_{low}$
 
-As we take off our data-generating hats and put on our model-fitting hats, let
-us remind ourselves of our original workflow:
-
-1. Generate draws from $p_{low}$
-
-We fit an initial approximate model to our data. All our calculations are
+We now take off our data-generating hats and put on our model-fitting hats. We fit an initial approximate model to our data. All our calculations are
 approximations, and so we refer to this model as a low resolution model, because
 we will check the calculations we did with it in the following steps.
 
-2. Tune the reference method using these draws
-
-Once we have posterior draws, we need to compute a high resolution reference
-model at each of these points. We will do this by comparing computations with
-the low resolution to the high resolution ones at every posterior draw and
-increasing the resolution of the reference model until we are happy it is
-accurately representing the dynamics.
-
-3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$
-diagnostic
-
-At this stage, we can compute importance weights and the $\hat{k}$ diagnostic
-
-4. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1
-
-If the $\hat{k}$ diagnostic is not low enough, it is not possible to do the
-importance sampling correction and we need to recompute our posterior with a
-higher resolution model.
-
-5. Resample draws using importance weights
-
-This is optional. At this point we have a weighted set of posterior draws. It
-is usually easier to work with a set of draws than a set of weighted draws, so
-we can resample our weighted draws using `posterior::resample_draws`.
-
-## 1. Generate draws from $p_{low}$
-
-Pretend this is measured data and we do not know the true thermal diffusivity.
-Perhaps we are greedy and want this computation to finish quickly and so we
-fit this with a very aggressive approximation (one timestep, one spatial point):
+Pretend `x_meas` is measured data and we do not know the true thermal diffusivity. Perhaps we are greedy and want this computation to finish quickly and so we fit this with a very aggressive approximation (one timestep, one spatial point):
 
 ```{r}
 dt = 1.0
@@ -268,11 +235,14 @@ off. We will diagnose this using our approximation tools though.
 print(fit, pars = c("K", "sigma"))
 ```
 
-## 2. Tune the reference method using the draws
+## Step 2: Tuning the reference method
 
-Given our posterior draws, we need to a high resolution reference solution
-that can accurately solve the system at every point. This does not mean we need
+Once we have posterior draws, we need to compute a high resolution reference
+model at each of these points. This does not mean we need
 the method of $M_{low}$ to be accurate. It could be, but now that we have draws from $p_{low}$, we are done with it until the importance sampling stage.
+
+We tune the high resolution method by solving the PDE at every posterior draw and increasing its resolution until we are happy it is
+accurately representing the dynamics.
 
 With a simple one parameter model we can plot our approximate errors as a
 function of K (so we know the solution is suitable everywhere).
@@ -298,9 +268,9 @@ plot(K_draws, errors)
 
 The maximum error here seems good enough.
 
-## 3. Compute importance weights $\frac{p_{high}}{p_{low}}$ and $\hat{k}$ diagnostic.
+## Step 3: Computing importance weights.
 
-The importance weights are computed on the log scale:
+The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log scale:
 
 ```{r}
 log_lh = rep(0, num_draws)
@@ -314,19 +284,22 @@ for (i in seq_len(num_draws)) {
 }
 ```
 
-The `loo` package computes the $\hat{k}$ diagnostic for us:
+## Step 4: Computing $\hat{k}$ diagnostic
+
+If the $\hat{k}$ diagnostic is not low enough, it is not possible to do the
+importance sampling correction and we need to recompute our posterior with a
+higher resolution model. The `loo` package computes the $\hat{k}$ diagnostic for us:
 
 ```{r pareto, fig.width=6, fig.height=4.5}
 loo::psis(log_lh_ref - log_lh)
 ```
 
 Oh no! $\hat{k} > 0.5$, and it turns out modeling this process with one timestep
-and one spatial point is not a good idea.
+and one spatial point is not a good idea. This means we need to up the precision in the low resolution model and go back to *Step 1*.
 
-## 4. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1
+## Repeating the loop
 
-It is time to up the precision in the low resolution model:
-
+### Step 1
 ```{r}
 dt = 0.1
 Nx = 10
@@ -341,13 +314,15 @@ fit <- sampling(model,
             cores = 4)
 ```
 
-Again we can check our regular diagnostics:
+Again, we can check our regular diagnostics:
 
 ```{r}
 print(fit, pars = c("K", "sigma"))
 ```
 
-And again we can verify our reference solution:
+### Step 2
+
+Again, we verify our reference solution:
 
 ```{r}
 dt_ref = 0.005
@@ -368,6 +343,7 @@ for(i in 1:num_draws) {
 plot(K_draws, errors)
 ```
 
+### Steps 3 and 4
 And again we can compute the importance ratios and run the PSIS diagnostics on
 them:
 
@@ -387,7 +363,11 @@ loo::psis(log_lh_ref - log_lh)
 
 And this time $\hat{k} < 0.5$, so we are good enough!
 
-## 5. Resample draws using importance weights
+## Step 5: Resampling draws
+
+This is optional. At this point we have a weighted set of posterior draws. It
+is usually easier to work with a set of draws than a set of weighted draws, so
+we can resample our weighted draws using `posterior::resample_draws`.
 
 The last step is resampling. We have draws of $K$ and $\sigma$, but they are
 weighted, and usually it is easier to just use a set of draws. Just because it
