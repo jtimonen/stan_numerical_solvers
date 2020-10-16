@@ -24,7 +24,6 @@ require(grDevices)
 require(ggplot2)
 require(loo)
 require(stats)
-set.seed(123)
 ```
 
 # SIR example
@@ -44,114 +43,184 @@ The dynamics of of the susceptible (S), infected (I) and recovered
 where $\beta, \gamma > 0$ are unknown parameters.
 
 ```{r, message=FALSE, results=FALSE}
-model <- stan_model("sir.stan")
+model = stan_model("sir.stan")
 expose_stan_functions(model)
 
 # Solve the SIR system and format result array
 # - theta = [beta, gamma]
-solve_sir <- function(y0, ts, theta, N, rtol, atol, max_steps){
-  x_r <- numeric(0)
-  y_hat <- stan_solve_sir(y0, ts, theta, x_r, N, rtol, atol, max_steps)
-  L <- length(y_hat)
-  y_hat <- unlist(y_hat)
-  n <- length(y_hat)
-  y_hat <- matrix(y_hat, L, n/L, byrow = TRUE)
+solve_sir = function(y0, ts, theta, N, rtol, atol, max_steps){
+  x_r = numeric(0)
+  y_hat = stan_solve_sir(y0, ts, theta, x_r, N, rtol, atol, max_steps)
+  L = length(y_hat)
+  y_hat = unlist(y_hat)
+  n = length(y_hat)
+  y_hat = matrix(y_hat, L, n/L, byrow = TRUE)
   return(y_hat)
+}
+
+# Function for plotting a solution y_hat
+plot_sir = function(y0, y_hat, ts) {
+  yyy = rbind(y0, y_hat)
+  ttt = c(0.0, ts)
+  y = as.vector(yyy)
+  day = rep(ttt, 3)
+  comp = rep( c("S", "I", "R"), each = length(ttt))
+  df = data.frame(day, y, as.factor(comp))
+  colnames(df) = c("Day", "y", "Compartment")
+  aes = aes_string(x = "Day", y = "y", group = "Compartment",
+                    color = "Compartment")
+  plt = ggplot(df, aes) + geom_line(lwd = 1) + geom_point()
+  return(plt)
 }
 ```
 
 Setup
 ```{r}
-n_days <- 16           # num. of measurement days (not inc. Day 0)
-N <- 1000              # population size
-I0 <- 20               # num. of infected on Day 0
-y0 <- c(N - I0, I0, 0) # S, I, R on Day 0
-ts <- seq_len(n_days)  # measurement times
-theta <- c(1,0.2)      # true parameter values
+n_days = 16           # num. of measurement days (not inc. Day 0)
+N = 1000              # population size
+I0 = 20               # num. of infected on Day 0
+y0 = c(N - I0, I0, 0) # S, I, R on Day 0
+ts = seq_len(n_days)  # measurement times
+theta_true = c(1,0.2) # true parameter values
 ```
 
-We use these control parameters
+We need to set the control parameters relative tolerance (`rtol`), absolute tolerance (`atol`) and maximum number of steps (`max_nunm_steps`) for the RK45 solver. We set the max number of steps to be a relatively large number, and don't expect it to be reached here. We define a reliability test helper function that makes the tolerances 10 times smaller
 
 ```{r}
-rtol <- 1e-10
-atol <- 1e-10
-max_steps <- 1e8
+max_num_steps = 1e8
 
-# Plot
-plot_sir <- function(y0, y_hat, ts) {
-  yyy <- rbind(y0, y_hat)
-  ttt <- c(0.0, ts)
-  y <- as.vector(yyy)
-  day <- rep(ttt, 3)
-  comp <- rep( c("S", "I", "R"), each = length(ttt))
-  df <- data.frame(day, y, as.factor(comp))
-  colnames(df) <- c("Day", "y", "Compartment")
-  aes <- aes_string(x = "Day", y = "y", group = "Compartment",
-                    color = "Compartment")
-  plt <- ggplot(df, aes) + geom_line(lwd = 1) + geom_point()
-  return(plt)
+# Function to help determine if atol and rtol are small enough at given theta
+check_reliability = function(rtol, atol, y0, ts, theta, 
+                             N, max_num_steps) {
+  y_hat = solve_sir(y0, ts, theta, N, rtol, 
+                    atol, max_num_steps)
+  y_hat2 = solve_sir(y0, ts, theta, N, rtol/10, 
+                     atol/10, max_num_steps)
+  max_abs_err = max(abs(y_hat - y_hat2))
+  return(max_abs_err)
 }
-
 ```
 
-Solve and plot:
+We can study the maximum absolute error compared to a solutino with 10 smaller
+tolerances, as a function `tol = atol = rtol`.
+```{r}
+mae = c()
+tol = 10^(-c(1:8))
+for (toler in tol) {
+  err = check_reliability(toler, toler, y0, ts, theta_true, 
+                          N, max_num_steps)
+  mae = c(mae, err)
+}
+plot(log10(tol), log10(mae), pch = 20)
+lines(log10(tol), log10(mae))
+```
+
+We decide that $10^{-6}$ is a good enough value to use for `atol` and `rtol`
+during simulation, and plot the solved dynamics.
 
 ```{r, fig.width=7, fig.height=3.5}
-y_hat <- solve_sir(y0, ts, theta, N, rtol, atol, max_steps)
+atol = 1e-6
+rtol = 1e-6
+y_hat = solve_sir(y0, ts, theta_true, N, rtol, atol, max_num_steps)
 plot_sir(y0, y_hat, ts)
 ```
 
-Create noisy data and plot:
+We add negative binomial noise to get an observed number of infected people (cases) at each time point.
 ```{r, fig.width=7, fig.height=4.8}
-phi <- 5 # true phi
-I_mean <- y_hat[,2]
-I_data <- stats::rnbinom(length(ts), mu = I_mean, size = phi)
+phi_true = 5 # true phi, controls dispersion
+I_mean = y_hat[,2]
+I_data = stats::rnbinom(length(ts), mu = I_mean, size = phi_true)
 plot(ts, I_data, pch = 16, col = "gray30", xlab = "Day", ylab = '#Infected')
 lines(ts, I_mean, col = "firebrick3")
 ```
 
-Create stan data and fit.
-```{r, fig.width=7, fig.height=4.5}
-stan_data <- list(
+## Applying the workflow
+
+### Generating draws from $p_{low}$
+
+In our cheap but fast model, we use looser tolerances.
+```{r, fig.width=7, fig.height=4.5, results=FALSE}
+rtol_low = 1e-4
+atol_low = 1e-3
+max_num_steps_low = 1e2
+
+stan_data = list(
   n_days = length(ts),
   y0 = y0,
   ts = ts,
   N = N,
   cases = I_data,
-  rtol = 1e-5,
-  atol = 1e-5,
-  max_steps = 1e6
+  rtol = rtol_low,
+  atol = atol_low,
+  max_num_steps = max_num_steps_low
 )
 
-fit <- sampling(model, stan_data, cores = 4)
+fit = rstan::sampling(model, stan_data)
 ```
 
-Studying results
-```{r, fig.width=7, fig.height=4.5}
-pars <- c("beta", "gamma", "phi")
-draws <- rstan::extract(fit, pars = pars)
-num_draws <- length(draws$phi)
-print(fit, pars = pars)
+The posteriors seem to be in accordance with the true values of the parameters.
+```{r}
+print(get_elapsed_time(fit))
+print(fit, pars = c("beta", "gamma", "phi"))
 ```
 
+### Tuning the reference method
 
-Plotting
-```{r, fig.width=7, fig.height=5.4}
-Y_hat <- rstan::extract(fit, pars = "y_hat")$y_hat
-num_draws <- length(draws$phi)
-col1 <- rgb(0,0,1,0.2)
-col2 <- rgb(1,0,0,0.2)
-col3 <- rgb(0,1,0,0.2)
+We check if the tolerances that were used in data generation would happen to
+be OK also for each posterior draw.
 
-# Show solution for some draws
-idx_draws <- sample.int(num_draws, 100)
-plot(ts, I_data, ylim=c(0,N), ylab = "#People", xlab = "Day")
-for (j in idx_draws) {
-  Yj <- Y_hat[j,,]
-  lines(ts, Yj[,1], col = col1)
-  lines(ts, Yj[,2], col = col2)
-  lines(ts, Yj[,3], col = col3)
+```{r}
+atol_high = 1e-6
+rtol_high = 1e-6
+max_num_steps_high = 1e8
+draws = rstan::extract(fit, pars = c("beta", "gamma", "phi"))
+phi_draws = draws$phi
+theta_draws = cbind(draws$beta, draws$gamma)
+num_draws = length(phi_draws)
+
+# Compute differences
+errors = c()
+for (i in 1:num_draws) {
+  mae = check_reliability(atol_high, rtol_high, y0, ts, 
+                          theta_draws[i,], N, max_num_steps_high)
+  errors = c(errors, mae)
 }
-points(ts, I_data, pch = 16)
+```
+
+We look at the errors 
+```{r}
+plot(1:num_draws, errors, col = "#1864de", xlab = "Draw index",
+     ylab = "Max. absolute error")
+```
+
+The errors here seem low enough, compared to the data scale.
+
+### Computing importance weights
+
+The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log
+scale. The priors cancel out so we only need to work with log likelihoods.
+
+```{r}
+log_lh_low = rep(0, num_draws)
+log_lh_high = rep(0, num_draws)
+for (i in seq_len(num_draws)) {
+  y_hat_low = solve_sir(y0, ts, theta_draws[i,], N, rtol_low, 
+                         atol_low, max_num_steps_low)
+  y_hat_high = solve_sir(y0, ts, theta_draws[i,], N, rtol_high,
+                          atol_high, max_num_steps_high)
+  log_lh_low[i] = sum(dnbinom(I_data, size = phi_draws[i],
+                              mu = y_hat_low[, 2], log = TRUE))
+  log_lh_high[i] = sum(dnbinom(I_data, size = phi_draws[i],
+                              mu = y_hat_high[, 2], log = TRUE))
+}
+log_weights = log_lh_high - log_lh_low
+
+plot(log_weights) # all very close to zero
+```
+
+### Computing $\hat{k}$ diagnostic
+
+```{r pareto, fig.width=6, fig.height=4.5}
+loo::psis(log_weights)
 ```
 
