@@ -326,31 +326,74 @@ qplot(errors, geom = "histogram")
 
 ### Computing importance weights
 
-The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log
-scale. The priors cancel out so we only need to work with log likelihoods.
+With the reference model in place, it is time to compute the importance
+weights $\frac{p_{high}}{p_{low}}$. On paper this is relatively simple,
+just compute the log density of the reference model and the log
+density of the low precision model and take the difference (we work
+with the log of the importance ratios $\log p_{high} - \log p_{low}$
+for numeric stability).
+
+The downside to these importance weights is that it might take some
+time to compute the log densities of the reference model. The
+upside is that all the calculations can be done in parallel, and it should
+still be way faster than sampling with the reference model itself.
+
+If the priors are kept the same between the reference and low precision
+model, then those can be left out of this calculation (they will cancel).
 
 ```{r}
 log_lh_low = rep(0, num_draws)
 log_lh_high = rep(0, num_draws)
 for (i in seq_len(num_draws)) {
-  y_hat_low = solve_sir(y0, ts, theta_draws[i,], N, rtol_low, 
-                         atol_low, max_num_steps_low)
-  y_hat_high = solve_sir(y0, ts, theta_draws[i,], N, rtol_high,
-                          atol_high, max_num_steps_high)
-  log_lh_low[i] = sum(dnbinom(I_data, size = phi_draws[i],
+  y_hat_low = solve_sir(theta_draws[i,], rtol_low, atol_low)
+  y_hat_high = solve_sir(theta_draws[i,], rtol_high, atol_high)
+  log_lh_low[i] = sum(dnbinom(y, size = phi_draws[i],
                               mu = y_hat_low[, 2], log = TRUE))
-  log_lh_high[i] = sum(dnbinom(I_data, size = phi_draws[i],
+  log_lh_high[i] = sum(dnbinom(y, size = phi_draws[i],
                               mu = y_hat_high[, 2], log = TRUE))
 }
 log_weights = log_lh_high - log_lh_low
+```
 
-plot(log_weights) # all very close to zero
+We can plot the log importance ratios and see they are all close to zero
+(which is good).
+
+```{r}
+qplot(log_weights, geom = "histogram")
 ```
 
 ### Computing $\hat{k}$ diagnostic
 
+With the importance ratios calculated, we can check if they are usable or not
+with the PSIS $\hat{k}$ diagnostic.
+
 ```{r pareto_sir, fig.width=6, fig.height=4.5}
 loo::psis(log_weights)
+```
+
+$\hat{k} < 0.5$, and so it is possible to use importance sampling to correct
+this approximation.
+
+### Resampling
+
+At this point we have a weighted set of posterior draws. It
+is usually easier to work with a set of draws than a set of weighted draws, so
+we can resample our weighted draws using `posterior::resample_draws`.
+
+Just because it is possible to do an importance sampling correction on a set
+of draws does not mean that unweighted statistics on these draws are safe
+to use. In this case, the results are not much different, but it is relatively
+trivial to do a resampling with the `posterior` package:
+
+```{r}
+w = exp(log_weights)
+draws_list = rstan::extract(fit, c("beta", "gamma"))
+draws_df = posterior::as_draws_df(draws_list)
+resampled_df = posterior::resample_draws(draws_df,
+                                         weights = w)
+
+print(draws_df %>% posterior::summarize_draws())
+print(resampled_df %>% posterior::summarize_draws())
 ```
 
 <!-- WEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE -->
@@ -641,16 +684,9 @@ And this time $\hat{k} < 0.5$, so we are good enough!
 
 ### Resampling draws
 
-This is optional. At this point we have a weighted set of posterior draws. It
+At this point we have a weighted set of posterior draws. Again it
 is usually easier to work with a set of draws than a set of weighted draws, so
-we can resample our weighted draws using `posterior::resample_draws`.
-
-The last step is resampling. We have draws of $K$ and $\sigma$, but they are
-weighted, and usually it is easier to just use a set of draws. Just because it
-is possible to do an importance sampling correction on a set of draws does not
-mean that unweighted statistics on these draws are safe to use. In this case,
-the results are not much different, but it is relatively trivial to do a
-resampling with the `posterior` package:
+we resample our weighted draws using `posterior::resample_draws`.
 
 ```{r}
 w = exp(log_weights)
