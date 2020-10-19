@@ -19,12 +19,12 @@ functions {
   
   // Solve the SIR system
   real[,] stan_solve_sir(real[] y0, real[] ts, real[] theta,
-      data real[] x_r, data int N, data real rtol, data real atol, 
+      data int N, data real rtol, data real atol, 
       data int max_num_steps) {
     int n_days = num_elements(ts);
     int x_i[1] = { N };
     real f[n_days, 3] = integrate_ode_rk45(stan_sir, y0, 0.0, ts, theta, 
-      x_r, x_i, rtol, atol, max_num_steps);
+      { 0.0 }, x_i, rtol, atol, max_num_steps);
     return(f);
   }
   
@@ -43,10 +43,6 @@ data {
   int<lower=1> max_num_steps;
 }
 
-transformed data {
-  real x_r[0];
-}
-
 parameters {
   real<lower=0> gamma;
   real<lower=0> beta;
@@ -59,7 +55,7 @@ transformed parameters{
     real theta[2];
     theta[1] = beta;
     theta[2] = gamma;
-    y_hat = stan_solve_sir(y0, ts, theta, x_r, N, rtol, atol, max_num_steps);
+    y_hat = stan_solve_sir(y0, ts, theta, N, rtol, atol, max_num_steps);
   }
 }
 
