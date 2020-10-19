@@ -124,7 +124,7 @@ The importance sampling diagnostics are handled with the
 # SIR example (ODE)
 
 Here we study a simple Susceptible-Infected-Recovered (SIR) model of disease
-spread. This model is detailed in more detail in
+spread. This model is described in more detail in
 [this case study](https://mc-stan.org/users/documentation/case-studies/boarding_school_case_study.html).
 
 The states of the ODE are amounts of susceptible (S), infected (I) and recovered
@@ -139,23 +139,49 @@ The states of the ODE are amounts of susceptible (S), infected (I) and recovered
 The parameters $\beta, \gamma > 0$ can be estimated from counts of the number
 of infected people (I).
 
+First, we will import a function from Stan for solving the ODE.
+
 ```{r, message=FALSE, results=FALSE}
 model = stan_model("stan/sir.stan")
 expose_stan_functions(model)
+```
+
+Second, we define various useful constants for our problem (the initial
+conditions, etc.) and a wrapper function for the Stan function that solves
+the ODE. The actual function exported from Stan is a bit awkward so we rewrap
+it here in a way that the only options we will expose are parameters and
+tolerance arguments.
+
+```{r}
+N = 16                                # number of days measured
+M = 1000                              # population size
+initial_infected = 20                 # number of infected on day 0
+initial_conditions = c(M - I0, I0, 0) # S, I, R on day 0
+ts = seq_len(n_days)                  # measurement times
+theta_true = c(1, 0.2)                # true parameter values
 
 # Solve the SIR system and format result array
 # - theta = [beta, gamma]
-solve_sir = function(y0, ts, theta, N, rtol, atol, max_steps){
-  y_hat = stan_solve_sir(y0, ts, theta, N, rtol, atol, max_steps)
-  L = length(y_hat)
-  y_hat = unlist(y_hat)
-  n = length(y_hat)
-  y_hat = matrix(y_hat, L, n/L, byrow = TRUE)
-  return(y_hat)
+solve_sir = function(theta, rtol, atol) {
+  stan_solve_sir(initial_conditions, ts, theta,
+                 c(0.0), M, rtol, atol) %>%
+    unlist %>%
+    matrix(ncol = 3, byrow = TRUE)
 }
+```
 
+The two tolerance arguments are the relative tolerance, `rtol`, and the
+absolute tolerance, `atol`. Roughly speaking, the `atol` is the tolerance for
+numbers near zero (the solver will be able to resolve numbers down to about
+the scale of `atol`) and `rtol` is the tolerance on the relative error the
+solver can make away from zero.
+
+We can just pick a couple tolerances and quickly run and plot a solution
+just to get a feel for what the system looks like:
+
+```{r}
 # Function for plotting a solution y_hat
-plot_sir = function(y0, y_hat, ts) {
+plot_sir = function(y0, y_hat) {
   yyy = rbind(y0, y_hat)
   ttt = c(0.0, ts)
   y = as.vector(yyy)
@@ -168,94 +194,100 @@ plot_sir = function(y0, y_hat, ts) {
   plt = ggplot(df, aes) + geom_line(lwd = 1) + geom_point()
   return(plt)
 }
+
+plot_sir(initial_conditions, solve_sir(theta_true, 1e-4, 1e-4))
 ```
 
-Setup
+In this model we are making noisy measurements of the number of infected
+people (I) at each day.
+
+## Generating data
+
+If we're going to generate data from our model we better have an accurate ODE
+solver, otherwise we're just generating data from some weird approximate model.
+
+The simplest way to check that an `atol` and `rtol` are suitable are to do
+a solve at one tolerance level, repeat the solve at a much smaller (more
+precise) tolerance, and then look at the maximum absolute error at any output
+point. We will create a function to do this automatically:
+
 ```{r}
-n_days = 16           # num. of measurement days (not inc. Day 0)
-N = 1000              # population size
-I0 = 20               # num. of infected on Day 0
-y0 = c(N - I0, I0, 0) # S, I, R on Day 0
-ts = seq_len(n_days)  # measurement times
-theta_true = c(1,0.2) # true parameter values
-```
-
-We need to set the control parameters relative tolerance (`rtol`), absolute tolerance (`atol`) and maximum number of steps (`max_nunm_steps`) for the RK45 solver. We set the max number of steps to be a relatively large number, and don't expect it to be reached here. We define a reliability test helper function that makes the tolerances 10 times smaller
-
-```{r}
-max_num_steps = 1e8
-
-# Function to help determine if atol and rtol are small enough at given theta
-check_reliability = function(rtol, atol, y0, ts, theta, 
-                             N, max_num_steps) {
-  y_hat = solve_sir(y0, ts, theta, N, rtol, 
-                    atol, max_num_steps)
-  y_hat2 = solve_sir(y0, ts, theta, N, rtol/10, 
-                     atol/10, max_num_steps)
+check_reliability = function(theta, rtol, atol) {
+  y_hat = solve_sir(theta, rtol, atol)
+  y_hat2 = solve_sir(theta, rtol / 10, atol / 10)
   max_abs_err = max(abs(y_hat - y_hat2))
   return(max_abs_err)
 }
 ```
 
-We can study the maximum absolute error compared to a solutino with 10 smaller
+We can study the maximum absolute error compared to a solution with 10 smaller
 tolerances, as a function `tol = atol = rtol`.
-```{r}
-mae = c()
-tol = 10^(-c(1:8))
-for (toler in tol) {
-  err = check_reliability(toler, toler, y0, ts, theta_true, 
-                          N, max_num_steps)
-  mae = c(mae, err)
+
+```{r, fig.width=7, fig.height=3.5}
+errors = c()
+tols = 10^(-c(1:12))
+for (tol in tols) {
+  errors = c(errors, check_reliability(theta_true, tol, tol))
 }
-plot(log10(tol), log10(mae), pch = 20)
-lines(log10(tol), log10(mae))
+
+qplot(tols, errors, geom = c("point", "line")) +
+  scale_x_log10() +
+  scale_y_log10()
 ```
 
 We decide that $10^{-6}$ is a good enough value to use for `atol` and `rtol`
-during simulation, and plot the solved dynamics.
-
-```{r, fig.width=7, fig.height=3.5}
-atol = 1e-6
-rtol = 1e-6
-y_hat = solve_sir(y0, ts, theta_true, N, rtol, atol, max_num_steps)
-plot_sir(y0, y_hat, ts)
-```
+during simulation. Certainly we do not expect to be measuring patients in the
+hospital down to an accuracy of $10^{-4}$ patients.
 
 We add negative binomial noise to get an observed number of infected people
 (cases) at each time point.
+
 ```{r, fig.width=7, fig.height=4.8}
-phi_true = 5 # true phi, controls dispersion
-I_mean = y_hat[,2]
-I_data = stats::rnbinom(length(ts), mu = I_mean, size = phi_true)
-plot(ts, I_data, pch = 16, col = "gray30", xlab = "Day", ylab = '#Infected')
-lines(ts, I_mean, col = "firebrick3")
+atol =  1e-6
+rtol = 1e-6
+
+dispersion = 5 # noise parameter for negative binomial
+mu = solve_sir(theta_true, atol, rtol)[, 2]
+y = stats::rnbinom(length(ts), mu = mu, size = dispersion)
+
+tibble(t = ts, mu = mu, y = y) %>%
+  ggplot() +
+  geom_line(aes(t, mu)) +
+  geom_point(aes(t, y)) +
+  xlab("Day") +
+  ylab("Infected people") +
+  ggtitle("Simulated data as points,\n Underlying solution as lines")
 ```
 
 ## Applying the workflow
 
+As a reminder, our mission in fitting this ODE is to use a low precision
+solver. It is always tempting to use low precision solvers when working
+with ODEs because they run faster. The difficulty becomes how to deal with
+the approximation. Does the approximation matter? If so, how can it be
+corrected? These are the questions the workflow here will allow us to answer.
+
 ### Generating draws from $p_{low}$
 
-In our cheap but fast model, we use looser tolerances.
+The first step in the workflow is to take an approximation and fit
+the data. In this case, we will use `rtol = 1e-4`, `atol = 1e-3`, which are
+quite low tolerances in general.
+
 ```{r, fig.width=7, fig.height=4.5, results=FALSE}
 rtol_low = 1e-4
 atol_low = 1e-3
-max_num_steps_low = 1e2
 
-stan_data = list(
-  n_days = length(ts),
-  y0 = y0,
+fit = rstan::sampling(model, list(
+  N = length(ts),
+  M = M,
   ts = ts,
-  N = N,
-  cases = I_data,
+  y = y,
+  initial_conditions = initial_conditions,
   rtol = rtol_low,
-  atol = atol_low,
-  max_num_steps = max_num_steps_low
-)
-
-fit = rstan::sampling(model, stan_data)
+  atol = atol_low))
 ```
 
-The posteriors seem to be in accordance with the true values of the parameters.
+
 ```{r}
 print(get_elapsed_time(fit))
 print(fit, pars = c("beta", "gamma", "phi"))
@@ -263,13 +295,15 @@ print(fit, pars = c("beta", "gamma", "phi"))
 
 ### Tuning the reference method
 
-We check if the tolerances that were used in data generation would happen to
-be OK also for each posterior draw.
+Before we can diagnose if this approximate posterior can be corrected to
+something more reliable, we need to develop that more reliable method.
+
+In this case, `rtol = atol = 1e-6` was accurate enough generating the data,
+so let's check if it's accurate in all the draws in this posterior.
 
 ```{r}
 atol_high = 1e-6
 rtol_high = 1e-6
-max_num_steps_high = 1e8
 draws = rstan::extract(fit, pars = c("beta", "gamma", "phi"))
 phi_draws = draws$phi
 theta_draws = cbind(draws$beta, draws$gamma)
@@ -278,19 +312,17 @@ num_draws = length(phi_draws)
 # Compute differences
 errors = c()
 for (i in 1:num_draws) {
-  mae = check_reliability(atol_high, rtol_high, y0, ts, 
-                          theta_draws[i,], N, max_num_steps_high)
+  mae = check_reliability(theta_draws[i,], atol_high, rtol_high)
   errors = c(errors, mae)
 }
 ```
 
-We look at the errors 
-```{r}
-plot(1:num_draws, errors, col = "#1864de", xlab = "Draw index",
-     ylab = "Max. absolute error")
-```
+The error for each draw shows that overall we are keeping under a maximum
+absolute error of one milliperson. This seems accurate enough.
 
-The errors here seem low enough, compared to the data scale.
+```{r}
+qplot(errors, geom = "histogram")
+```
 
 ### Computing importance weights
 
