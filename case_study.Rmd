@@ -29,7 +29,7 @@ require(ggplot2)
 require(loo)
 require(stats)
 require(posterior)
-set.seed(123)
+set.seed(123) # rng seed for data simulation
 ```
 
 The required `posterior` package is not in CRAN but can be installed via 
@@ -141,7 +141,7 @@ of infected people (I).
 
 First, we will import a function from Stan for solving the ODE.
 
-```{r, message=FALSE, results=FALSE}
+```{r sir_model, message=FALSE, results=FALSE}
 model = stan_model("stan/sir.stan")
 expose_stan_functions(model)
 ```
@@ -152,12 +152,12 @@ the ODE. The actual function exported from Stan is a bit awkward so we rewrap
 it here in a way that the only options we will expose are parameters and
 tolerance arguments.
 
-```{r}
+```{r sir_solve}
 N = 16                                # number of days measured
 M = 1000                              # population size
-initial_infected = 20                 # number of infected on day 0
+I0 = 20                               # number of infected on day 0
 initial_conditions = c(M - I0, I0, 0) # S, I, R on day 0
-ts = seq_len(n_days)                  # measurement times
+ts = seq_len(N)                       # measurement times
 theta_true = c(1, 0.2)                # true parameter values
 
 # Solve the SIR system and format result array
@@ -179,7 +179,7 @@ solver can make away from zero.
 We can just pick a couple tolerances and quickly run and plot a solution
 just to get a feel for what the system looks like:
 
-```{r}
+```{r sir_plot}
 # Function for plotting a solution y_hat
 plot_sir = function(y0, y_hat) {
   yyy = rbind(y0, y_hat)
@@ -211,7 +211,7 @@ a solve at one tolerance level, repeat the solve at a much smaller (more
 precise) tolerance, and then look at the maximum absolute error at any output
 point. We will create a function to do this automatically:
 
-```{r}
+```{r sir_check}
 check_reliability = function(theta, rtol, atol) {
   y_hat = solve_sir(theta, rtol, atol)
   y_hat2 = solve_sir(theta, rtol / 10, atol / 10)
@@ -223,7 +223,7 @@ check_reliability = function(theta, rtol, atol) {
 We can study the maximum absolute error compared to a solution with 10 smaller
 tolerances, as a function `tol = atol = rtol`.
 
-```{r, fig.width=7, fig.height=3.5}
+```{r sir_tols, fig.width=7, fig.height=3.5}
 errors = c()
 tols = 10^(-c(1:12))
 for (tol in tols) {
@@ -242,7 +242,7 @@ hospital down to an accuracy of $10^{-4}$ patients.
 We add negative binomial noise to get an observed number of infected people
 (cases) at each time point.
 
-```{r, fig.width=7, fig.height=4.8}
+```{r sir_noise, fig.width=7, fig.height=4.8}
 atol =  1e-6
 rtol = 1e-6
 
@@ -252,11 +252,11 @@ y = stats::rnbinom(length(ts), mu = mu, size = dispersion)
 
 tibble(t = ts, mu = mu, y = y) %>%
   ggplot() +
-  geom_line(aes(t, mu)) +
+  geom_line(aes(t, mu), col = "firebrick") +
   geom_point(aes(t, y)) +
   xlab("Day") +
   ylab("Infected people") +
-  ggtitle("Simulated data as points,\n Underlying solution as lines")
+  ggtitle("Simulated data as points \nUnderlying solution as lines")
 ```
 
 ## Applying the workflow
@@ -273,7 +273,7 @@ The first step in the workflow is to take an approximation and fit
 the data. In this case, we will use `rtol = 1e-4`, `atol = 1e-3`, which are
 quite low tolerances in general.
 
-```{r, fig.width=7, fig.height=4.5, results=FALSE}
+```{r sir_fit, fig.width=7, fig.height=4.5, results=FALSE}
 rtol_low = 1e-4
 atol_low = 1e-3
 
@@ -288,7 +288,7 @@ fit = rstan::sampling(model, list(
 ```
 
 
-```{r}
+```{r sir_summary}
 print(get_elapsed_time(fit))
 print(fit, pars = c("beta", "gamma", "phi"))
 ```
@@ -301,7 +301,7 @@ something more reliable, we need to develop that more reliable method.
 In this case, `rtol = atol = 1e-6` was accurate enough generating the data,
 so let's check if it's accurate in all the draws in this posterior.
 
-```{r}
+```{r sir_tune}
 atol_high = 1e-6
 rtol_high = 1e-6
 draws = rstan::extract(fit, pars = c("beta", "gamma", "phi"))
@@ -320,7 +320,7 @@ for (i in 1:num_draws) {
 The error for each draw shows that overall we are keeping under a maximum
 absolute error of one milliperson. This seems accurate enough.
 
-```{r}
+```{r sir_hist}
 qplot(errors, geom = "histogram")
 ```
 
@@ -341,7 +341,7 @@ still be way faster than sampling with the reference model itself.
 If the priors are kept the same between the reference and low precision
 model, then those can be left out of this calculation (they will cancel).
 
-```{r}
+```{r sir_weights}
 log_lh_low = rep(0, num_draws)
 log_lh_high = rep(0, num_draws)
 for (i in seq_len(num_draws)) {
@@ -358,7 +358,7 @@ log_weights = log_lh_high - log_lh_low
 We can plot the log importance ratios and see they are all close to zero
 (which is good).
 
-```{r}
+```{r sir_weight_hist}
 qplot(log_weights, geom = "histogram")
 ```
 
@@ -367,7 +367,7 @@ qplot(log_weights, geom = "histogram")
 With the importance ratios calculated, we can check if they are usable or not
 with the PSIS $\hat{k}$ diagnostic.
 
-```{r pareto_sir, fig.width=6, fig.height=4.5}
+```{r sir_pareto, fig.width=6, fig.height=4.5}
 loo::psis(log_weights)
 ```
 
@@ -385,7 +385,7 @@ of draws does not mean that unweighted statistics on these draws are safe
 to use. In this case, the results are not much different, but it is relatively
 trivial to do a resampling with the `posterior` package:
 
-```{r}
+```{r sir_resample}
 w = exp(log_weights)
 draws_list = rstan::extract(fit, c("beta", "gamma"))
 draws_df = posterior::as_draws_df(draws_list)
@@ -428,12 +428,12 @@ given a timestep, a spatial discretization, a hypothetical diffusivity, a
 measurement time, and a list of measurement points and returns the predicted
 temperature at each of those measurement points.
 
-```{r}
+```{r diffusion_model}
 model = stan_model("stan/diffusion.stan")
 expose_stan_functions(model)
 ```
 
-```{r}
+```{r diffusion_solve}
 dt = 1.0
 Nx = 10
 K = 1e-1
@@ -463,7 +463,7 @@ generate data under these conditions and try to recover the diffusivity later.
 
 First, let's set up constants and plot a possible solution:
 
-```{r diffusion, fig.width = 6.75, fig.height = 5}
+```{r diffusion_setup, fig.width = 6.75, fig.height = 5}
 dt = 1e-1
 Nx = 5
 L = 1.0
@@ -493,7 +493,7 @@ Our first question will be: is this solution accurate enough at the blue points?
 We define a function that we can use for determining reliability, given a
 fixed parameter value $K$. In our approach we double the space and time resolution and check the maximum absolute error.
 
-```{r}
+```{r diffusion_check}
 # Function to help determine if dt and Nx are small enough at given K
 check_reliability = function(dt, Nx, K, T_meas, x_meas) {
   mu = solve_pde(dt, Nx, K, T_meas, x_meas)
@@ -509,7 +509,7 @@ check_reliability(dt, Nx, K_true, T_meas, x_meas)
 Is that good or is that bad? That is something that will need to be determined in the context of the application. In this case I am going to generate data with a standard deviation of $0.1$, and so I want to get my numerical error quite a
 bit below that before I am comfortable.
 
-```{r}
+```{r diffusion_check2}
 dt = 0.01
 Nx = 40
 check_reliability(dt, Nx, K_true, T_meas, x_meas)
@@ -518,7 +518,7 @@ check_reliability(dt, Nx, K_true, T_meas, x_meas)
 This seems good enough for now, but you might further refine your solution. Now
 to simulate data:
 
-```{r}
+```{r diffusion_noise}
 sigma = 0.1
 noise = rnorm(length(x_meas), 0, sigma)
 y = solve_pde(dt, Nx, K_true, T_meas, x_meas) + noise
@@ -534,7 +534,7 @@ we will check the calculations we did with it in the following steps.
 
 Pretend `x_meas` is measured data and we do not know the true thermal diffusivity. Perhaps we are greedy and want this computation to finish quickly and so we fit this with a very aggressive approximation (one timestep, one spatial point):
 
-```{r}
+```{r diffusion_fit1}
 dt_low = 1.0
 Nx_low = 1
 fit = rstan::sampling(model,
@@ -544,14 +544,14 @@ fit = rstan::sampling(model,
                             T_meas = T_meas,
                             x_meas = x_meas,
                             y = y),
-                cores = 4)
+                cores = 1)
 ```
 
 Looking at the posterior it appears everything was successful and the chains
 mixed. However, we remember from earlier that $K_{true} = 0.1$, so something is
 off. We will diagnose this using our approximation tools though.
 
-```{r}
+```{r diffusion_summary1}
 print(fit, pars = c("K", "sigma"))
 ```
 
@@ -560,7 +560,7 @@ print(fit, pars = c("K", "sigma"))
 We tune the high resolution method the same way as we did when generating the data, except that now we need to check the maximum absolute error (MAE) for all
 parameter values that we sampled.
 
-```{r}
+```{r diffusion_tune1}
 dt_high = 0.005
 Nx_high = 80
 
@@ -579,7 +579,7 @@ for (i in 1:num_draws) {
 With a simple one parameter model we can plot our approximate errors as a
 function of K (so we know the solution is suitable everywhere).
 
-```{r}
+```{r diffusion_errors1}
 error_plot = function(K, mae) {
   ylab = "Max. absolute error"
   plot(K, mae, pch = 4, col = "#1864de", xlab = "K", ylab = ylab)
@@ -594,7 +594,7 @@ The errors here seem low enough.
 The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log
 scale. The priors cancel out so we only need to work with log likelihoods.
 
-```{r}
+```{r diffusion_weights1}
 # Define a function
 compute_log_weights = function(
   dt_low, Nx_low, dt_high, Nx_high, 
@@ -623,7 +623,7 @@ If the $\hat{k}$ diagnostic is not low enough, it is not possible to do the
 importance sampling correction and we need to recompute our posterior with a
 higher resolution model. The `loo` package computes the $\hat{k}$ diagnostic for us:
 
-```{r pareto, fig.width=6, fig.height=4.5}
+```{r diffusion_pareto1, fig.width=6, fig.height=4.5}
 loo::psis(log_weights)
 ```
 
@@ -632,7 +632,7 @@ and one spatial point is not a good idea. This means we need to up the precision
 
 ### Repeating the loop
 
-```{r}
+```{r diffusion_fit2}
 dt_low = 0.1
 Nx_low = 10
 fit = rstan::sampling(model,
@@ -642,18 +642,18 @@ fit = rstan::sampling(model,
                             T_meas = T_meas,
                             x_meas = x_meas,
                             y = y),
-                cores = 4)
+                cores = 1)
 ```
 
 Again, we can check our regular diagnostics:
 
-```{r}
+```{r diffusion_summary2}
 print(fit, pars = c("K", "sigma"))
 ```
 
 Again, we verify our reference solution:
 
-```{r}
+```{r diffusion_tune2}
 dt_high = 0.005
 Nx_high = 80
 K_draws = rstan::extract(fit, "K")$K
@@ -674,7 +674,7 @@ error_plot(K_draws, errors)
 And again we can compute the importance ratios and run the PSIS diagnostics on
 them:
 
-```{r}
+```{r diffusion_weights2}
 log_weights = compute_log_weights(dt_low, Nx_low, dt_high, Nx_high,
                                   K_draws, T_meas, x_meas, y)
 loo::psis(log_weights)
@@ -688,7 +688,7 @@ At this point we have a weighted set of posterior draws. Again it
 is usually easier to work with a set of draws than a set of weighted draws, so
 we resample our weighted draws using `posterior::resample_draws`.
 
-```{r}
+```{r diffusion_resampling}
 w = exp(log_weights)
 draws_list = rstan::extract(fit, c("K", "sigma"))
 draws_df = posterior::as_draws_df(draws_list)
@@ -703,7 +703,7 @@ print(resampled_df %>% posterior::summarize_draws())
 
 # Computation environment
 
-```{r session}
+```{r computational_environment}
 sessionInfo()
 ```
 
