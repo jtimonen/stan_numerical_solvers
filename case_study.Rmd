@@ -172,16 +172,24 @@ solve_sir = function(theta, rtol, atol, max_num_steps) {
 ```
 
 The ODE solvers in Stan are adaptive time step solvers, which estimate the
-local error of the solution and adapt their step size based on a required
-tolerance for this error. Three control parameters need to be given, and
-they are roughly described here.
+local error of the solution and adapt their step size so that the local error
+estimates are less than `atol + rtol * abs(y)`, where `y` is the ODE solution,
+and `atol` and `rtol` are called absolute and relative tolerance,
+respectively. These tolerances need to be given, and affect both the accuracy
+and computational cost of the solution. In general, `rtol` is the tolerance on the relative error the solver can make when `y` is far from zero. When `abs(y)` is small (of the order of `atol` or smaller), there is no need to achieve the relative tolerance.
 
-* The absolute tolerance (`atol`) is the tolerance for numbers near zero (the solver will be able to resolve numbers down to about
-the scale of `atol`)
-* The relative tolerance (`rtol`) is the tolerance on the relative error the
-solver can make away from zero.
-* Maximum number of steps `max_num_steps` is the maximum number of steps that
-can be taken.
+A third control parameter, `max_num_steps`, determines the maximum number of steps that can be taken to achieve the tolerance. 
+
+*TODO:* add here what happens if max_num_steps is reached during sampling?
+Reject? When the tolerances are set loosely, the sampler can become really
+slow and hang totally if max_num_steps is large. My guess would be that this happends because it struggles to get out of a bad initial point as the
+gradients are so wrong and it needs to do a lot of solves in places where it
+will need to take a huge number of steps all the time. I don't
+know but somehow this seems to be cured by setting max_num_steps lower and
+pareto-k looks good. We
+should do something like record the number of taken steps in different parts
+of the parameter space.
+
 
 We can just pick a couple tolerances and quickly run and plot a solution
 just to get a feel for what the system looks like:
@@ -500,7 +508,7 @@ df = data.frame(c(x, x, x_meas), c(u0, uT, mu), as.factor(grp))
 colnames(df) = c("x", "u", "Legend")
 aes = aes_string(x = "x", y = "u", group = "Legend", color = "Legend",
                   lty = "Legend", pch = "Legend")
-plt = ggplot(df, aes) + geom_line() + geom_point() + 
+ggplot(df, aes) + geom_line() + geom_point() + 
   scale_linetype_manual(values = c(NA,1,1)) +
   scale_shape_manual(values = c(16,NA,NA))
 ```
