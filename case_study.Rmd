@@ -24,7 +24,6 @@ knitr::opts_chunk$set(echo = TRUE)
 require(rstan)
 library(tidyverse)
 require(bayesplot)
-require(grDevices)
 require(ggplot2)
 require(loo)
 require(stats)
@@ -136,10 +135,12 @@ The states of the ODE are amounts of susceptible (S), infected (I) and recovered
     \frac{dR}{dt} &=  \gamma \cdot I
 \end{align}
 
-The parameters $\beta, \gamma > 0$ can be estimated from counts of the number
-of infected people (I).
+The parameters $\beta, \gamma > 0$ can be estimated if we have time-course data of S, I, and R. As we see in this example, it is enough to have observations of the number of infected people (I).
 
-First, we will import a function from Stan for solving the ODE.
+## Solving the system
+
+First, we will import a function from `stan/sir.stan` for solving the ODE.
+It uses the `integrate_ode_rk45` function that is built into Stan.
 
 ```{r sir_model, message=FALSE, results=FALSE}
 model = stan_model("stan/sir.stan")
@@ -162,19 +163,25 @@ theta_true = c(1, 0.2)                # true parameter values
 
 # Solve the SIR system and format result array
 # - theta = [beta, gamma]
-solve_sir = function(theta, rtol, atol) {
+solve_sir = function(theta, rtol, atol, max_num_steps) {
   stan_solve_sir(initial_conditions, ts, theta,
-                 c(0.0), M, rtol, atol) %>%
+                 c(0.0), M, rtol, atol, max_num_steps) %>%
     unlist %>%
     matrix(ncol = 3, byrow = TRUE)
 }
 ```
 
-The two tolerance arguments are the relative tolerance, `rtol`, and the
-absolute tolerance, `atol`. Roughly speaking, the `atol` is the tolerance for
-numbers near zero (the solver will be able to resolve numbers down to about
-the scale of `atol`) and `rtol` is the tolerance on the relative error the
+The ODE solvers in Stan are adaptive time step solvers, which estimate the
+local error of the solution and adapt their step size based on a required
+tolerance for this error. Three control parameters need to be given, and
+they are roughly described here.
+
+* The absolute tolerance (`atol`) is the tolerance for numbers near zero (the solver will be able to resolve numbers down to about
+the scale of `atol`)
+* The relative tolerance (`rtol`) is the tolerance on the relative error the
 solver can make away from zero.
+* Maximum number of steps `max_num_steps` is the maximum number of steps that
+can be taken.
 
 We can just pick a couple tolerances and quickly run and plot a solution
 just to get a feel for what the system looks like:
@@ -195,7 +202,7 @@ plot_sir = function(y0, y_hat) {
   return(plt)
 }
 
-plot_sir(initial_conditions, solve_sir(theta_true, 1e-4, 1e-4))
+plot_sir(initial_conditions, solve_sir(theta_true, 1e-4, 1e-4, 1e8))
 ```
 
 In this model we are making noisy measurements of the number of infected
@@ -212,9 +219,9 @@ precise) tolerance, and then look at the maximum absolute error at any output
 point. We will create a function to do this automatically:
 
 ```{r sir_check}
-check_reliability = function(theta, rtol, atol) {
-  y_hat = solve_sir(theta, rtol, atol)
-  y_hat2 = solve_sir(theta, rtol / 10, atol / 10)
+check_reliability = function(theta, rtol, atol, max_num_steps) {
+  y_hat = solve_sir(theta, rtol, atol, max_num_steps)
+  y_hat2 = solve_sir(theta, rtol / 10, atol / 10, max_num_steps)
   max_abs_err = max(abs(y_hat - y_hat2))
   return(max_abs_err)
 }
@@ -227,7 +234,7 @@ tolerances, as a function `tol = atol = rtol`.
 errors = c()
 tols = 10^(-c(1:12))
 for (tol in tols) {
-  errors = c(errors, check_reliability(theta_true, tol, tol))
+  errors = c(errors, check_reliability(theta_true, tol, tol, 1e8))
 }
 
 qplot(tols, errors, geom = c("point", "line")) +
@@ -247,7 +254,7 @@ atol =  1e-6
 rtol = 1e-6
 
 dispersion = 5 # noise parameter for negative binomial
-mu = solve_sir(theta_true, atol, rtol)[, 2]
+mu = solve_sir(theta_true, atol, rtol, 1e8)[, 2]
 y = stats::rnbinom(length(ts), mu = mu, size = dispersion)
 
 tibble(t = ts, mu = mu, y = y) %>%
@@ -276,6 +283,7 @@ quite low tolerances in general.
 ```{r sir_fit, fig.width=7, fig.height=4.5, results=FALSE}
 rtol_low = 1e-4
 atol_low = 1e-3
+max_num_steps_low = 100
 
 fit = rstan::sampling(model, list(
   N = length(ts),
@@ -284,7 +292,8 @@ fit = rstan::sampling(model, list(
   y = y,
   initial_conditions = initial_conditions,
   rtol = rtol_low,
-  atol = atol_low))
+  atol = atol_low,
+  max_num_steps = max_num_steps_low))
 ```
 
 
@@ -304,6 +313,7 @@ so let's check if it's accurate in all the draws in this posterior.
 ```{r sir_tune}
 atol_high = 1e-6
 rtol_high = 1e-6
+max_num_steps_high = 1e6
 draws = rstan::extract(fit, pars = c("beta", "gamma", "phi"))
 phi_draws = draws$phi
 theta_draws = cbind(draws$beta, draws$gamma)
@@ -312,7 +322,8 @@ num_draws = length(phi_draws)
 # Compute differences
 errors = c()
 for (i in 1:num_draws) {
-  mae = check_reliability(theta_draws[i,], atol_high, rtol_high)
+  mae = check_reliability(theta_draws[i,], atol_high, rtol_high,
+                          max_num_steps_high)
   errors = c(errors, mae)
 }
 ```
@@ -345,8 +356,10 @@ model, then those can be left out of this calculation (they will cancel).
 log_lh_low = rep(0, num_draws)
 log_lh_high = rep(0, num_draws)
 for (i in seq_len(num_draws)) {
-  y_hat_low = solve_sir(theta_draws[i,], rtol_low, atol_low)
-  y_hat_high = solve_sir(theta_draws[i,], rtol_high, atol_high)
+  y_hat_low = solve_sir(theta_draws[i,], rtol_low, atol_low,
+                        max_num_steps_low)
+  y_hat_high = solve_sir(theta_draws[i,], rtol_high, atol_high, 
+                         max_num_steps_high)
   log_lh_low[i] = sum(dnbinom(y, size = phi_draws[i],
                               mu = y_hat_low[, 2], log = TRUE))
   log_lh_high[i] = sum(dnbinom(y, size = phi_draws[i],
@@ -387,7 +400,7 @@ trivial to do a resampling with the `posterior` package:
 
 ```{r sir_resample}
 w = exp(log_weights)
-draws_list = rstan::extract(fit, c("beta", "gamma"))
+draws_list = rstan::extract(fit, c("beta", "gamma", "phi"))
 draws_df = posterior::as_draws_df(draws_list)
 resampled_df = posterior::resample_draws(draws_df,
                                          weights = w)
@@ -428,7 +441,7 @@ given a timestep, a spatial discretization, a hypothetical diffusivity, a
 measurement time, and a list of measurement points and returns the predicted
 temperature at each of those measurement points.
 
-```{r diffusion_model}
+```{r diffusion_model, message=FALSE, results=FALSE}
 model = stan_model("stan/diffusion.stan")
 expose_stan_functions(model)
 ```
@@ -469,21 +482,30 @@ Nx = 5
 L = 1.0
 
 # Pretend we're measuring everywhere so we see the full solution
-x = seq(-0.1, 1.1, length = 100)
+P = 100
+x = seq(-0.1, 1.1, length = P)
 x_meas = seq(0.0, L, length = 7)[2:6]
 T_meas = 1.0
 K_true = 0.025
 
+# Solve
 u0 = solve_pde(dt, Nx, K_true, 0.0, x)
 uT = solve_pde(dt, Nx, K_true, T_meas, x)
 mu = solve_pde(dt, Nx, K_true, T_meas, x_meas)
 
-plot(x, u0, type = 'l')
-lines(x, uT, col = 'firebrick')
-points(x_meas, mu, col = '#1864de')
+# Plot
+T_str = paste0("u(t = ", T_meas, ", x)")
+grp = c(rep("u(t = 0, x)", P), rep(T_str, P), rep("mu", length(mu)))
+df = data.frame(c(x, x, x_meas), c(u0, uT, mu), as.factor(grp))
+colnames(df) = c("x", "u", "Legend")
+aes = aes_string(x = "x", y = "u", group = "Legend", color = "Legend",
+                  lty = "Legend", pch = "Legend")
+plt = ggplot(df, aes) + geom_line() + geom_point() + 
+  scale_linetype_manual(values = c(NA,1,1)) +
+  scale_shape_manual(values = c(16,NA,NA))
 ```
 
-The blue points in the solution are the ones we compare to (these
+The red points in the solution are the ones we compare to (these
 are the parts of the solution we care most about). *TODO: this figure probably needs more explaining.*
 
 ## Reliability of the solution
@@ -534,7 +556,7 @@ we will check the calculations we did with it in the following steps.
 
 Pretend `x_meas` is measured data and we do not know the true thermal diffusivity. Perhaps we are greedy and want this computation to finish quickly and so we fit this with a very aggressive approximation (one timestep, one spatial point):
 
-```{r diffusion_fit1}
+```{r diffusion_fit1, results=FALSE}
 dt_low = 1.0
 Nx_low = 1
 fit = rstan::sampling(model,
@@ -581,8 +603,11 @@ function of K (so we know the solution is suitable everywhere).
 
 ```{r diffusion_errors1}
 error_plot = function(K, mae) {
-  ylab = "Max. absolute error"
-  plot(K, mae, pch = 4, col = "#1864de", xlab = "K", ylab = ylab)
+  ylab = 
+  df = data.frame(K, mae)
+  ggplot(df, aes_string(x = "K", y = "mae")) + 
+    geom_point(col = "#1864de", alpha = 0.5) +
+    xlab("K") + ylab("Max. absolute error")
 }
 error_plot(K_draws, errors)
 ```
@@ -632,7 +657,7 @@ and one spatial point is not a good idea. This means we need to up the precision
 
 ### Repeating the loop
 
-```{r diffusion_fit2}
+```{r diffusion_fit2, results=FALSE}
 dt_low = 0.1
 Nx_low = 10
 fit = rstan::sampling(model,
