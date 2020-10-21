@@ -18,14 +18,14 @@ functions {
   }
   
   // Solve the SIR system
-  real[,] stan_solve_sir(real[] y0, real[] ts, real[] theta,
+  vector stan_solve_sir(real[] y0, real[] ts, real[] theta,
       data real[] x_r, data int M, data real rtol, data real atol,
       data real max_num_steps) {
     int n_days = num_elements(ts);
     int x_i[1] = { M };
     real f[n_days, 3] = integrate_ode_rk45(stan_sir, y0, 0.0, ts, theta, 
       x_r, x_i, rtol, atol, max_num_steps);
-    return(f);
+    return(to_vector(f[, 2]));
   }
   
 }
@@ -54,7 +54,7 @@ parameters {
 }
 
 transformed parameters{
-  real mu[N, 3] = stan_solve_sir(initial_conditions, ts, { beta, gamma },
+  vector[N] mu = stan_solve_sir(initial_conditions, ts, { beta, gamma },
                                  x_r, M, rtol, atol, max_num_steps);
 }
 
@@ -62,9 +62,7 @@ model {
   beta ~ normal(2, 1);
   gamma ~ normal(0.4, 0.5);
   phi ~ lognormal(1, 1);
-  {
-    // Add small positive number to solution to avoid negative numbers
-    vector[N] mu_jitter = 10.0*atol + to_vector(mu[, 2]);
-    y ~ neg_binomial_2(mu_jitter, phi);
-  }
+  
+  // Add small positive number to solution to avoid negative numbers
+  y ~ neg_binomial_2(mu + 2.0 * atol, phi);
 }
