@@ -1,4 +1,4 @@
-# Reliable and fast use of numerical solvers
+# Reliable and fast use of numerical solvers in Stan
 
 A Stan case study.
 
