@@ -36,47 +36,77 @@ The required `posterior` package is not in CRAN but can be installed via
 
 # Introduction
 
-Assume we have a Bayesian model that involves a numeric solution to some ODE or
-PDE (ordinary or partial differential equation), which contains
-uncertain parameters. Try as we might, these calculations are often expensive
-and frequently become the limiting factors in whatever model they are involved
-in. The simplest things we might do to speed up our calculations are lowering
+Assume we have a Bayesian model that involves an ODE or
+PDE (ordinary or partial differential equation) system with uncertain
+parameters. When performing Bayesian inference for these parameters 
+(and possible other model parameters) using Stan,
+the system needs to be solved numerically on each log posterior probability
+evaluation. Furthermore, Stan needs to compute gradients for these solutions.
+Try as we might, these computations are often expensive and frequently become
+the limiting factors in whatever model they are involved in. 
+
+The numerical methods for ODEs and PDEs usually involve some discretization in
+space/time, which affects the solver accuracy. Denser discretization means
+more accuracy but also more computation. Alternatively, methods can estimate
+their error and adapt their step size so that a given tolerance is achieved.
+The latter is what the built-in ODE solvers in Stan do.
+
+The simplest things we might do to speed up our calculations are lowering
 the timestep, coarsening the discretization, or increasing the tolerance of the
-solvers.
+solvers. That immediately leaves us with the question, is this okay? Has
+changing the numerical method affected our parameter inference results? Was our
+original method giving correct inference results to begin with? Are the default
+tolerances in Stan suitable for the problem at hand?
 
-That immediately leaves us with the question, is this okay? Has loosening the
-tolerance affected the statistics of our solution? The technical answer is yes,
-the practical answer is maybe, and the ideal case is no, but without checking
-there's no way of knowing.
+The solution provided by a numerical method is always an approximation to the
+true solution, which is general does not have a closed form. This is why our
+posterior probability density evaluations are also approximations and
+the whole MCMC inference can be thought to be biased to some degree. However,
+we can think that the inference results are correct if making the numerical
+method more accurate does not affect the statistical properties of the
+posterior draws.
 
-How can something like this be checked? The numerical approximation
-answer is we should compare to a reference model and verify that the solution
-at all points in space/time in the approximation are appropriately close
-to the reference. That isn't so much of a problem in and of itself, but we're
-doing statistics, and so we need to know that the solution is accurate enough
-across all relevant parts of parameter space. Additionally, the "relevant parts
-of parameter space" is the posterior itself which is not known beforehand!
+How can something like this be checked? The first problem is that it might not
+be computationally very attractive to run sampling repeatedly, gradually
+increasing the solver accuracy. If the model parameters are fixed,
+we can verify that the solution at all points in space/time is
+appropriately close to a more accurate reference solution. That isn't so much
+of a problem in and of itself, but we're doing statistics, and so we need to
+know that the solution is accurate enough across all relevant parts of parameter
+space. Additionally, it is not known beforehand where the 
+"relevant parts of parameter space" are!
 
-The problem of validating an approximation in a Bayesian model is
-significantly more complicated than in the classical numerical analysis world.
-The point of this case study is to show how by adding one additional tool,
-namely Pareto-Smoothed Importance Sampling (PSIS; @yao2018, @vehtari2019), we
-can solve this problem.
+The problem of validating the use of a numerical method for a Bayesian model
+is therefore significantly more complicated than in the classical numerical
+analysis world. The point of this case study is to show how by adding one
+additional tool, namely Pareto-Smoothed Importance Sampling (PSIS; @yao2018,
+@vehtari2019), we can solve this problem.
 
 # Workflow
 
-Assume we have two models, $M_{low}$ and $M_{high}$.
-These are otherwise the same model, except that $M_{low}$ uses a cheaper and
-less accurate numerical methods (or just looser tolerances) to compute the
-required ODE or PDE solutions. Therefore they have different posteriors,
-$p_{low}$ and $p_{high}$, respectively.
+Let $M$ be the model for which we would like to perform inference, but which we
+cannot evaluate since the likelihood is defined implicitly through an
+ODE or PDE system that is not analytically tractable. MCMC inference for $M$
+can be seen actually as inference for another model $M_{high}$, which
+is the same model as $M$ but using a numerical solver, and can therefore be
+evaluated.
+
+Our workflow addresses the problem of defining the high-precision numerical
+method in $M_{high}$ so that $M_{high}$ can trusted to have essentially the
+same posterior as $M$. We define a way to perform inference for $M_{high}$ 
+without needing to compute gradients or HMC trajectories for it. This involves
+another model $M_{low}$, which is again the same model, except that $M_{low}$
+uses a cheaper and less accurate numerical methods (or just looser tolerances
+and/or coarser discretization) to compute the required ODE or PDE solutions,
+and is therefore faster to fit. The posterior densities are denoted $p_{low}$
+and $p_{high}$, respectively.
 
 To understand how PSIS comes into play, we must first discuss importance
 sampling. If we want to compute expectations with the high precision model, we
 can take draws from the low precision models and reweight these according to the
 importance weights $\frac{p_{high}}{p_{low}}$. If these models are too
 different, then the reweighting will produce noisy estimates that are not
-useful. PSIS and particularly the $\hat{k}$ diagnostic (pronounced k-hat) is
+useful. PSIS and particularly the Pareto $k$-diagnostic (denoted $\hat{k}$), is
 the tool that tells us when we can or cannot rely on the importance weights. If
 $\hat{k} < 0.5$ we are safe to do the importance sampling, if $\hat{k} < 0.7$
 the importance sampling will start to converge more slowly, and if
@@ -88,18 +118,18 @@ completely in all parts of the parameter space so that, as long as
 $\hat{k} < 0.5$, importance weights can be used to reweight the low precision
 approximation $p_{low}$ to the high precision approximation $p_{high}$. We can
 think of $M_{high}$ as a reference model, because it is the baseline to which
-we compare. It is difficult in practice to have a reference model that works
-in all parts of parameter space because the properties of solvers (such as
-stiffness of an ODE) can be very different in different parts of the parameter
-space. Accuracy can be checked at a given set of parameters fairly easily,
-but not over a high dimensional parameter space. Under these conditions it is
-necessary to compromise to develop a reference model that works only over a
-range of parameter space, but even then it is hard to know a-priori what range
-that is.
+we compare. It is difficult in practice to know if a given model is a good
+reference model in all parts of parameter space, due to curse of dimensionality
+and the fact that analysed system can have different properties in different
+parts of the parameter space. For example, ODEs can qualitatively change their
+behaviour as a function of parameters (bifurcation), or become stiff or
+chaotic in some parameter regions. Accuracy can be checked at a given set of
+parameters fairly easily, but not over a high dimensional parameter space.
+Under these conditions it is necessary to compromise to develop a reference
+model that works only over a range of parameter space, but even then it is hard
+to know *a priori* what range that is.
 
-We propose a workflow which addresses not only the problem of picking an
-appropriate approximation but also the problem of developing a good reference
-model.
+We propose the following workflow:
 
 ::: {#workflow .box}
 1. Generate draws from $p_{low}$.
@@ -107,15 +137,17 @@ model.
 these draws. All application specific knowledge and classical numerical
 analysis can be used here.
 3. Compute importance weights $\frac{p_{high}}{p_{low}}$
-4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of $p_{low}$ and go back to step 1.
-5. Resample draws using importance weights.
+4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
+the numerical method in $M_{low}$ and go back to step 1.
+5. Resample draws of $M_{low}$, using importance weights to get draws from
+   $M_{high}$, and therefore essentially draws from $M$.
 :::
 
-The next two sections of this case study outline how to apply this workflow to:
+The next two sections of this case study outline how to apply this workflow to
+do fast but reliable inference for
 
-1. Do inference with a low-precision ODE model and check and correct it
-with a high precision solver after the fact
-2. Do inference using a PDE solver that does not have explicit tolerance
+1. an ODE model using a built-in Stan solver
+2. a PDE model using a custom solver that does not have explicit tolerance
 controls
 
 The importance sampling diagnostics are handled with the
@@ -130,8 +162,8 @@ spread. This model is described in more detail in
 
 For the purposes of this case study, the goal is to use a very low
 precision ODE solver to do inference and then check it afterwards against
-a high precision solver. This can be done in practice if sampling with the
-high precision solver itself takes an inordinate amount of time.
+a high precision solver. This is useful in practice if sampling with the
+high precision solver itself would take an inordinate amount of time.
 
 The states of the ODE are amounts of susceptible (S), infected (I) and recovered
 (R) people. The dynamics are given by the ODE system:
@@ -187,17 +219,13 @@ the relative error the solver can make when `y` is far from zero. When `abs(y)`
 is small (of the order of `atol` or smaller), there is no need to achieve the
 relative tolerance.
 
-A third control parameter, `max_num_steps`, determines the maximum number of steps that can be taken to achieve the tolerance. 
-
-*TODO:* add here what happens if max_num_steps is reached during sampling?
-Reject? When the tolerances are set loosely, the sampler can become really
-slow and hang totally if max_num_steps is large. My guess would be that this happends because it struggles to get out of a bad initial point as the
-gradients are so wrong and it needs to do a lot of solves in places where it
-will need to take a huge number of steps all the time. I don't
-know but somehow this seems to be cured by setting max_num_steps lower and
-pareto-k looks good. We
-should do something like record the number of taken steps in different parts
-of the parameter space.
+A third control parameter, `max_num_steps`, determines the maximum number of
+steps that can be taken to achieve the tolerance. In practice, we have
+observed that setting this to a much smaller value than the default can
+lower the warmup times of some chains by several orders of magnitude. This can
+be because it possibly helps in rejecting or quickly getting out of 
+initial low-probability parameter regions, where the ODE solutions blow up and achieving the tolerances would require a much larger number of steps than in
+the good parameter region.
 
 We can just pick a couple tolerances and quickly run and plot a solution
 just to get a feel for what the system looks like:
@@ -284,16 +312,17 @@ tibble(t = ts, mu = mu, y = y) %>%
 As a reminder, our mission in fitting this ODE is to use a low precision
 solver. It is always tempting to use low precision solvers when working
 with ODEs because they run faster. The difficulty becomes how to deal with
-the approximation. Does the approximation matter? If so, how can it be
-corrected? These are the questions the workflow here will allow us to answer.
+the coarser approximation. Does the lower precision cause an effect that
+matters? If so, can it be corrected and how? These are the questions the
+workflow here will allow us to answer.
 
 ### Generating draws from $p_{low}$
 
-The first step in the workflow is to take any low precision approximation and
-fit the data. Remember, all our numerical methods are approximations, and so
-we refer to this model specifically as a low precision model. We will check it
-against a higher precision model later. In this case, we will use
-`rtol = 1e-4`, `atol = 1e-3`.
+The first step in the workflow is to take any low precision approximation 
+($M_{low}$) and fit the data. Remember, all our numerical methods are
+approximations, and so we refer to this model specifically as a low precision
+model. We will check it against a higher precision model later. In this case,
+we will use `rtol = 1e-4`, `atol = 1e-3`.
 
 ```{r sir_fit, fig.width=7, fig.height=4.5, results=FALSE}
 rtol_low = 1e-4
@@ -319,9 +348,9 @@ print(fit, pars = c("beta", "gamma", "phi"))
 ### Developing a reference model
 
 Before we can check if the importance sampling correction is possible, we
-need to have a reference model to compare against. That means we need a
-version of the model with tolerances such that it is suitably accurate across
-all the posterior draws generated from the low precision model.
+need to have a reference model ($M_{high}$) to compare against. That means we
+need a version of the model with tolerances such that it is suitably accurate
+across all the posterior draws generated from the low precision model.
 
 In this case, `rtol = atol = 1e-6` was accurate enough generating the data,
 so let's check if it is accurate in all the draws in this posterior.
@@ -347,23 +376,27 @@ for (i in 1:num_draws) {
 We can plot this as a distribution and see that `rtol = atol = 1e-6` keeps
 us under an absolute error of one milliperson. This seems accurate enough.
 
-```{r sir_hist}
+```{r sir_hist, message=FALSE}
 qplot(errors, geom = "histogram")
 ```
 
 ### Computing importance weights
 
 With the reference model in place, it is time to compute the importance
-weights $\frac{p_{high}}{p_{low}}$. This is simple:
+weights $\frac{p_{high}}{p_{low}}$ for each post-warmup draw. This is simple:
 just compute the log density of the reference model and the log
 density of the low precision model and take the difference (we work
 with the log of the importance ratios $\log p_{high} - \log p_{low}$
 for numeric stability).
 
 The hidden downside is that it might take some time to compute the log
-densities of the reference model. The upside is that all the calculations
-can be done in parallel, and it should still be way faster than sampling
-with the reference model itself.
+densities of the reference model for each draw. It should still be way faster
+than sampling with the reference model itself, since we don't need to compute
+gradients, HMC trajectories, evaluate proposals that can be rejected, and 
+skip the whole warmup period. Therefore we likely won't have to try to do
+accurate ODE solves in the ill-behaved parameter regions, where a huge number
+of steps would be needed to achieve the ODE tolerances. Another upside is that
+the calculations can be done in parallel for each draw.
 
 If the priors are kept the same between the reference and low precision
 model, then those can be left out of this calculation (they will cancel).
@@ -387,7 +420,7 @@ log_weights = log_lh_high - log_lh_low
 We can plot the log importance ratios and see they are all close to zero
 (which means out approximation was not too bad).
 
-```{r sir_weight_hist}
+```{r sir_weight_hist, message=FALSE}
 qplot(log_weights, geom = "histogram")
 ```
 
@@ -441,8 +474,8 @@ be written -- it is not always easy to tack on error control algorithms.
 
 In this hypothetical experiment, the rod is cooled to room
 temperature and then heated from the left side. After some time the temperature
-profile of the rod is measured and from this the thermal diffusivity will be
-estimated.
+profile of the rod is measured and from this the thermal diffusivity $K$ will 
+be estimated.
 
 The dynamics are governed by the 1D heat equation:
 
@@ -564,7 +597,7 @@ check_reliability(dt, Nx, K_true, T_meas, x_meas)
 
 Is that error good or is that bad? That is something that will need to be
 determined in the context of the application. In this case we are going assume
-a measurment noise of $0.1$, and so we should get our numerical error quite a
+a measurement noise of $0.1$, and so we should get our numerical error quite a
 bit below that.
 
 ```{r diffusion_check2}
@@ -662,7 +695,7 @@ The errors here seem low enough.
 
 ### Computing importance weights
 
-The importance weights $\frac{p_{high}}{p_{low}}$  are computed on the log
+The importance weights $\frac{p_{high}}{p_{low}}$ are computed on the log
 scale. The priors cancel out so we only need to work with log likelihoods.
 
 Again, this step looks simple in this example, but in practice it might be
