@@ -79,8 +79,8 @@ space. Additionally, it is not known beforehand where the
 The problem of validating the use of a numerical method for a Bayesian model
 is therefore significantly more complicated than in the classical numerical
 analysis world. The point of this case study is to show how by adding one
-additional tool, namely Pareto-Smoothed Importance Sampling (PSIS; @yao2018,
-@vehtari2019), we can solve this problem.
+additional tool, namely Pareto-Smoothed Importance Sampling (PSIS) [@yao2018;
+@vehtari2019], we can solve this problem.
 
 # Workflow
 
@@ -157,8 +157,8 @@ The importance sampling diagnostics are handled with the
 # SIR example (ODE)
 
 Here we study a simple Susceptible-Infected-Recovered (SIR) model of disease
-spread. This model is described in more detail in
-[this case study](https://mc-stan.org/users/documentation/case-studies/boarding_school_case_study.html).
+spread. This model is essentially the same as in the earlier Boarding School 
+SIR Case Study [@grinsztajn2020].
 
 For the purposes of this case study, the goal is to use a very low
 precision ODE solver to do inference and then check it afterwards against
