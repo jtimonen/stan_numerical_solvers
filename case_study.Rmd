@@ -156,9 +156,10 @@ The importance sampling diagnostics are handled with the
 
 # SIR example (ODE)
 
-Here we study a simple Susceptible-Infected-Recovered (SIR) model of disease
-spread. This model is essentially the same as in the earlier Boarding School 
-SIR Case Study [@grinsztajn2020].
+Here we study a classic Susceptible-Infected-Recovered (SIR) model of disease
+spread. The code is adapted from that in the Stan Case Study [@grinsztajn2020], 
+which provides an introduction to disease
+transmission modeling in Stan in general.
 
 For the purposes of this case study, the goal is to use a very low
 precision ODE solver to do inference and then check it afterwards against
