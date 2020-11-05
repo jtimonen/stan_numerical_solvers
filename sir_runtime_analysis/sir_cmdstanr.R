@@ -22,7 +22,7 @@ y <- round(y)
 
 atol <- 1e-5
 rtol <- 1e-5
-max_num_steps <- 1e8
+max_num_steps <- 3
 
 dat = list(
   N = length(ts),
