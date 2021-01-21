@@ -1,7 +1,7 @@
 ---
 title: "Fast and reliable use of numerical solvers"
 date: "`r Sys.Date()`"
-author: "Juho Timonen and Ben Bales"
+author: "Juho Timonen, Ben Bales, Harri Lähdesmäki and Aki Vehtari"
 link-citations: true
 output:
   html_document:
@@ -28,7 +28,7 @@ require(ggplot2)
 require(loo)
 require(stats)
 require(posterior)
-set.seed(123) # rng seed for data simulation
+set.seed(321) # rng seed for data simulation
 ```
 
 The required `posterior` package is not in CRAN but can be installed via 

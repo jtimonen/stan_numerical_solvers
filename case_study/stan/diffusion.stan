@@ -140,3 +140,4 @@ model {
   K ~ normal(0, 1.0);
   y ~ normal(mu, sigma);
 }
+
