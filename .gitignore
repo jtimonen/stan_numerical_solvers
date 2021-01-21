@@ -4,13 +4,11 @@
 *.DS_Store
 *.Rhistory
 *.Renviron
+*.Rproj.user
 
-case_study.html
-misc/*.html
+*.html
 *.md
-figure/
 
 *_files/
 *_cache/
 
-.Rproj.user
