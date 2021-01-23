@@ -28,8 +28,9 @@ require(ggplot2)
 require(loo)
 require(stats)
 require(posterior)
-init_rng_seed <- 999
-set.seed(init_rng_seed) # rng seed for data simulation
+rng_seed_r <- 999
+rng_seed_stan <- 123
+set.seed(rng_seed_r) # rng seed for data simulation
 ```
 
 The required `posterior` package is not in CRAN but can be installed via 
@@ -332,8 +333,7 @@ we will use `rtol = 1e-4`, `atol = 1e-3`.
 rtol_low <- 1e-4
 atol_low <- 1e-3
 max_num_steps_low <- 100
-
-fit <- rstan::sampling(model, list(
+stan_data <- list(
   N = length(ts),
   M = M,
   ts = ts,
@@ -342,7 +342,13 @@ fit <- rstan::sampling(model, list(
   rtol = rtol_low,
   atol = atol_low,
   max_num_steps = max_num_steps_low
-))
+)
+
+fit <- rstan::sampling(model,
+  stan_data,
+  seed = rng_seed_stan,
+  cores = 4
+)
 ```
 
 
@@ -445,7 +451,8 @@ With the importance ratios calculated, we can check if they are usable or not
 with the PSIS $\hat{k}$ diagnostic.
 
 ```{r sir_pareto}
-psis1 <- loo::psis(log_weights)
+r_eff1 <- loo::relative_eff(x = exp(-log_weights))
+psis1 <- loo::psis(log_weights, r_eff = r_eff1)
 print(psis1)
 ```
 
@@ -649,17 +656,19 @@ discretization:
 ```{r diffusion_fit1, results=FALSE}
 dt_low <- 1.0
 Nx_low <- 1
+stan_data <- list(
+  dt = dt_low,
+  Nx = Nx_low,
+  N_meas = length(x_meas),
+  T_meas = T_meas,
+  x_meas = x_meas,
+  y = y
+)
 fit <- rstan::sampling(model,
-  data = list(
-    dt = dt_low,
-    Nx = Nx_low,
-    N_meas = length(x_meas),
-    T_meas = T_meas,
-    x_meas = x_meas,
-    y = y
-  ),
+  stan_data,
   control = list(adapt_delta = 0.95),
-  cores = 1
+  cores = 4,
+  seed = rng_seed_stan
 )
 ```
 
@@ -757,7 +766,8 @@ higher resolution model. The `loo` package computes the $\hat{k}$ diagnostic
 for us:
 
 ```{r diffusion_pareto1, fig.width=6, fig.height=4.5}
-psis2 <- loo::psis(log_weights)
+r_eff2 <- loo::relative_eff(x = exp(-log_weights))
+psis2 <- loo::psis(log_weights, r_eff = r_eff2)
 print(psis2)
 ```
 
@@ -770,17 +780,19 @@ in the low resolution model and go back to *Step 1*.
 ```{r diffusion_fit2, results=FALSE}
 dt_low <- 0.1
 Nx_low <- 10
+stan_data <- list(
+  dt = dt_low,
+  Nx = Nx_low,
+  N_meas = length(x_meas),
+  T_meas = T_meas,
+  x_meas = x_meas,
+  y = y
+)
 fit <- rstan::sampling(model,
-  data = list(
-    dt = dt_low,
-    Nx = Nx_low,
-    N_meas = length(x_meas),
-    T_meas = T_meas,
-    x_meas = x_meas,
-    y = y
-  ),
+  stan_data,
   control = list(adapt_delta = 0.95),
-  cores = 1
+  cores = 4,
+  seed = rng_seed_stan
 )
 ```
 
@@ -816,7 +828,9 @@ log_weights <- compute_log_weights(
   dt_low, Nx_low, dt_high, Nx_high,
   K_draws, T_meas, x_meas, y
 )
-psis3 <- loo::psis(log_weights)
+
+r_eff3 <- loo::relative_eff(x = exp(-log_weights))
+psis3 <- loo::psis(log_weights, r_eff = r_eff3)
 print(psis3)
 ```
 
@@ -851,7 +865,8 @@ And that is that! Happy approximating!
 
 ```{r computational_environment, echo=FALSE}
 sessionInfo()
-cat(paste0("Initial rng seed was ", init_rng_seed, "\n"))
+cat(paste0("Initial rng seed was ", rng_seed_r, "\n"))
+cat(paste0("Stan rng seed was ", rng_seed_stan, "\n"))
 
 # Result check
 pareto_k_check <- function(res, expected_ok = TRUE) {
@@ -860,7 +875,7 @@ pareto_k_check <- function(res, expected_ok = TRUE) {
   msg <- paste0("In ", arg_name, ", pareto_k was ", round(khat, 5), "\n")
   cat(msg)
   return(khat)
-} 
+}
 khat1 <- pareto_k_check(psis1)
 khat2 <- pareto_k_check(psis2)
 khat3 <- pareto_k_check(psis3)
