@@ -28,6 +28,8 @@ require(ggplot2)
 require(loo)
 require(stats)
 require(posterior)
+require(ggpubr)
+
 rng_seed_r <- 999
 rng_seed_stan <- 123
 set.seed(rng_seed_r) # rng seed for data simulation
@@ -142,7 +144,7 @@ analysis can be used here.
 4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
 the numerical method in $M_{low}$ and go back to step 1.
 5. Resample draws of $M_{low}$, using importance weights to get draws from
-   $M_{high}$, and therefore essentially draws from $M$.
+$M_{high}$, and therefore essentially draws from $M$.
 :::
 
 The next two sections of this case study outline how to apply this workflow to
@@ -172,9 +174,9 @@ The states of the ODE are amounts of susceptible (S), infected (I) and recovered
 (R) people. The dynamics are given by the ODE system:
 
 \begin{align}
-    \frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N} \\
-    \frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N} - \gamma \cdot I \\
-    \frac{dR}{dt} &=  \gamma \cdot I
+\frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N} \\
+\frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N} - \gamma \cdot I \\
+\frac{dR}{dt} &=  \gamma \cdot I
 \end{align}
 
 The parameters $\beta$ and $\gamma$ will be estimated from time series
@@ -186,7 +188,7 @@ First, we will import a function from `stan/sir.stan` for solving the ODE.
 It uses the `integrate_ode_rk45` function that is built into Stan.
 
 ```{r sir_model, message=FALSE, results=FALSE}
-model <- stan_model("stan/sir.stan")
+model <- stan_model("sir.stan")
 expose_stan_functions(model)
 ```
 
@@ -345,9 +347,9 @@ stan_data <- list(
 )
 
 fit <- rstan::sampling(model,
-  stan_data,
-  seed = rng_seed_stan,
-  cores = 4
+                       stan_data,
+                       seed = rng_seed_stan,
+                       cores = 4
 )
 ```
 
@@ -367,30 +369,62 @@ In this case, `rtol = atol = 1e-6` was accurate enough generating the data,
 so let's check if it is accurate in all the draws in this posterior.
 
 ```{r sir_tune}
+get_draws <- function(fit, pars) {
+  draws_3d <- rstan::extract(fit, pars = pars, permute = FALSE)
+  n_draws <- dim(draws_3d)[1]
+  n_chains <- dim(draws_3d)[2]
+  draws_2d <- c()
+  chain_id <- rep(1:n_chains, each = n_draws)
+  for (j in seq_len(n_chains)) {
+    draws_2d <- rbind(draws_2d, draws_3d[,j,])
+  }
+  draws_2d <- cbind(as.factor(chain_id), draws_2d)
+  colnames(draws_2d) <- c("chain_id", pars)
+  data.frame(draws_2d)
+}
+
+pars <- c("beta", "gamma", "phi")
+draws <- get_draws(fit, pars)
+
+
 atol_high <- 1e-6
 rtol_high <- 1e-6
 max_num_steps_high <- 1e6
-draws <- rstan::extract(fit, pars = c("beta", "gamma", "phi"))
-phi_draws <- draws$phi
-theta_draws <- cbind(draws$beta, draws$gamma)
-num_draws <- length(phi_draws)
 
 # Compute differences
-errors <- c()
-for (i in 1:num_draws) {
-  mae <- check_reliability(
-    theta_draws[i, ], atol_high, rtol_high,
-    max_num_steps_high
-  )
-  errors <- c(errors, mae)
+compute_errors <- function(df, ode_pars) {
+  num_draws <- nrow(df)
+  mae <- c()
+  for (i in 1:num_draws) {
+    theta <- as.numeric(df[i, ode_pars])
+    mae_i <- check_reliability(theta, atol_high, rtol_high, max_num_steps_high)
+    mae <- c(mae, mae_i)
+  }
+  df$mae <- mae
+  return(df)
 }
+
+ode_pars <- c("beta", "gamma")
+draws <- compute_errors(draws, ode_pars)
+
+# Pairs plot of draws
+scatter_colored <- function(df, x, y, color_by) {
+  aest <- aes_string(x = x, y = y, color = color_by)
+  a <- ggplot(df, aest) + geom_point() + scale_color_viridis_c()
+  return(a)
+}
+
+p1 <- scatter_colored(draws, "beta", "gamma", "mae")
+p2 <- scatter_colored(draws, "beta", "phi", "mae")
+p3 <- scatter_colored(draws, "gamma", "phi", "mae")
+ggarrange(p1, p2, p3)
 ```
 
 We can plot this as a distribution and see that `rtol = atol = 1e-6` keeps
 us under an absolute error of one milliperson. This seems accurate enough.
 
 ```{r sir_hist, message=FALSE}
-qplot(errors, geom = "histogram")
+qplot(draws$mae, geom = "histogram")
 ```
 
 ### Computing importance weights
@@ -415,34 +449,38 @@ If the priors are kept the same between the reference and low precision
 model, then those can be left out of this calculation (they will cancel).
 
 ```{r sir_weights}
-log_lh_low <- rep(0, num_draws)
-log_lh_high <- rep(0, num_draws)
-for (i in seq_len(num_draws)) {
-  y_hat_low <- solve_sir(
-    theta_draws[i, ], rtol_low, atol_low,
-    max_num_steps_low
-  )
-  y_hat_high <- solve_sir(
-    theta_draws[i, ], rtol_high, atol_high,
-    max_num_steps_high
-  )
-  log_lh_low[i] <- sum(dnbinom(y,
-    size = phi_draws[i],
-    mu = y_hat_low, log = TRUE
-  ))
-  log_lh_high[i] <- sum(dnbinom(y,
-    size = phi_draws[i],
-    mu = y_hat_high, log = TRUE
-  ))
+compute_log_ratios <- function(df, ode_pars, lh_pars) {
+  num_draws <- nrow(df)
+  log_lh_low <- rep(0, num_draws)
+  log_lh_high <- rep(0, num_draws)
+  for (i in seq_len(num_draws)) {
+    theta_i <- as.numeric(df[i, ode_pars])
+    phi_i <- as.numeric(df[i, lh_pars])
+    y_hat_low <- solve_sir(theta_i, rtol_low, atol_low, max_num_steps_low)
+    y_hat_high <- solve_sir(theta_i, rtol_high, atol_high, max_num_steps_high)
+    log_lh_low[i] <- sum(dnbinom(y, size = phi_i, mu = y_hat_low, log = TRUE))
+    log_lh_high[i] <- sum(dnbinom(y, size = phi_i, mu = y_hat_high, log = TRUE))
+  }
+  draws$log_lh_high <- log_lh_high
+  draws$log_lh_low <- log_lh_low
+  draws$log_ratio <- log_lh_high - log_lh_low
+  return(draws)
 }
-log_weights <- log_lh_high - log_lh_low
+
+lh_pars <- "phi"
+draws <- compute_log_ratios(draws, ode_pars, lh_pars)
+
+p1 <- scatter_colored(draws, "beta", "gamma", "log_ratio")
+p2 <- scatter_colored(draws, "beta", "phi", "log_ratio")
+p3 <- scatter_colored(draws, "gamma", "phi", "log_ratio")
+ggarrange(p1, p2, p3)
 ```
 
 We can plot the log importance ratios and see they are all close to zero
 (which means out approximation was not too bad).
 
 ```{r sir_weight_hist, message=FALSE}
-qplot(log_weights, geom = "histogram")
+qplot(draws$log_ratios, geom = "histogram")
 ```
 
 ### Computing $\hat{k}$ diagnostic
@@ -451,8 +489,9 @@ With the importance ratios calculated, we can check if they are usable or not
 with the PSIS $\hat{k}$ diagnostic.
 
 ```{r sir_pareto}
-r_eff1 <- loo::relative_eff(x = exp(-log_weights))
-psis1 <- loo::psis(log_weights, r_eff = r_eff1)
+r_eff <- loo::relative_eff(x = exp(-draws$log_ratio), draws$chain_id)
+psis1 <- loo::psis(draws$log_ratio, r_eff = r_eff)
+print(psis1$diagnostics)
 print(psis1)
 ```
 
@@ -473,11 +512,11 @@ to use. In this case, the results are not much different, but it should not
 be forgotten:
 
 ```{r sir_resample}
-w <- exp(log_weights)
+w <- exp(draws$log_ratio)
 draws_list <- rstan::extract(fit, c("beta", "gamma", "phi"))
 draws_df <- posterior::as_draws_df(draws_list)
 resampled_df <- posterior::resample_draws(draws_df,
-  weights = w
+                                          weights = w
 )
 
 print(draws_df %>% posterior::summarize_draws())
@@ -522,7 +561,7 @@ spatial discretization, a hypothetical diffusivity, a measurement time, and a
 list of measurement points.
 
 ```{r diffusion_model, message=FALSE, results=FALSE}
-model <- stan_model("stan/diffusion.stan")
+model <- stan_model("diffusion.stan")
 expose_stan_functions(model)
 ```
 
@@ -665,10 +704,10 @@ stan_data <- list(
   y = y
 )
 fit <- rstan::sampling(model,
-  stan_data,
-  control = list(adapt_delta = 0.95),
-  cores = 4,
-  seed = rng_seed_stan
+                       stan_data,
+                       control = list(adapt_delta = 0.95),
+                       cores = 4,
+                       seed = rng_seed_stan
 )
 ```
 
@@ -694,15 +733,16 @@ precision).
 dt_high <- 0.01
 Nx_high <- 100
 
-K_draws <- rstan::extract(fit, "K")$K
-sigma_draws <- rstan::extract(fit, "sigma")$sigma
-num_draws <- length(K_draws)
+draws <- get_draws(fit, c("K", "sigma"))
+K_draws <- draws$K
+sigma_draws <- draws$sigma
+num_draws <- nrow(draws)
 
 # Compute differences
-errors <- c()
+mae <- c()
 for (i in 1:num_draws) {
-  mae <- check_reliability(dt_high, Nx_high, K_draws[i], T_meas, x_meas)
-  errors <- c(errors, mae)
+  mae_i <- check_reliability(dt_high, Nx_high, K_draws[i], T_meas, x_meas)
+  mae <- c(mae, mae_i)
 }
 ```
 
@@ -718,7 +758,7 @@ error_plot <- function(K, mae) {
     xlab("K") +
     ylab("Max. absolute error")
 }
-error_plot(K_draws, errors)
+error_plot(K_draws, mae)
 ```
 
 The errors here seem low enough.
@@ -736,9 +776,9 @@ in a different software environment entirely.
 
 ```{r diffusion_weights1}
 # Define a function
-compute_log_weights <- function(
-                                dt_low, Nx_low, dt_high, Nx_high,
-                                K_draws, T_meas, x_meas, y_meas) {
+compute_log_ratios <- function(
+  dt_low, Nx_low, dt_high, Nx_high,
+  K_draws, T_meas, x_meas, y_meas) {
   log_lh_low <- rep(0, num_draws)
   log_lh_high <- rep(0, num_draws)
   for (i in seq_len(num_draws)) {
@@ -747,12 +787,12 @@ compute_log_weights <- function(
     log_lh_low[i] <- sum(dnorm(y_meas, mu_low, sigma_draws[i], log = TRUE))
     log_lh_high[i] <- sum(dnorm(y_meas, mu_high, sigma_draws[i], log = TRUE))
   }
-  log_weights <- log_lh_high - log_lh_low
-  return(log_weights)
+  log_ratios <- log_lh_high - log_lh_low
+  return(log_ratios)
 }
 
 # Apply function
-log_weights <- compute_log_weights(
+log_ratios <- compute_log_ratios(
   dt_low, Nx_low, dt_high, Nx_high,
   K_draws, T_meas, x_meas, y
 )
@@ -766,8 +806,9 @@ higher resolution model. The `loo` package computes the $\hat{k}$ diagnostic
 for us:
 
 ```{r diffusion_pareto1, fig.width=6, fig.height=4.5}
-r_eff2 <- loo::relative_eff(x = exp(-log_weights))
-psis2 <- loo::psis(log_weights, r_eff = r_eff2)
+r_eff <- loo::relative_eff(x = exp(-log_ratios), chain_id = draws$chain_id)
+psis2 <- loo::psis(log_ratios, r_eff = r_eff)
+print(psis2$diagnostics)
 print(psis2)
 ```
 
@@ -789,10 +830,10 @@ stan_data <- list(
   y = y
 )
 fit <- rstan::sampling(model,
-  stan_data,
-  control = list(adapt_delta = 0.95),
-  cores = 4,
-  seed = rng_seed_stan
+                       stan_data,
+                       control = list(adapt_delta = 0.95),
+                       cores = 4,
+                       seed = rng_seed_stan
 )
 ```
 
@@ -805,9 +846,10 @@ print(fit, pars = c("K", "sigma"))
 Again, we verify our reference solution:
 
 ```{r diffusion_tune2}
-K_draws <- rstan::extract(fit, "K")$K
-sigma_draws <- rstan::extract(fit, "sigma")$sigma
-num_draws <- length(K_draws)
+draws <- get_draws(fit, c("K", "sigma"))
+K_draws <- draws$K
+sigma_draws <- draws$sigma
+num_draws <- nrow(draws)
 
 # Compute differences
 errors <- c()
@@ -824,13 +866,14 @@ And again we can compute the importance ratios and run the PSIS diagnostics on
 them:
 
 ```{r diffusion_weights2}
-log_weights <- compute_log_weights(
+log_ratios <- compute_log_ratios(
   dt_low, Nx_low, dt_high, Nx_high,
   K_draws, T_meas, x_meas, y
 )
 
-r_eff3 <- loo::relative_eff(x = exp(-log_weights))
-psis3 <- loo::psis(log_weights, r_eff = r_eff3)
+r_eff <- loo::relative_eff(x = exp(-log_ratios), chain_id = draws$chain_id)
+psis3 <- loo::psis(log_ratios, r_eff = r_eff)
+print(psis3$diagnostics)
 print(psis3)
 ```
 
@@ -843,11 +886,11 @@ is usually easier to work with a set of draws than a set of weighted draws, so
 we resample our weighted draws using `posterior::resample_draws`.
 
 ```{r diffusion_resampling}
-w <- exp(log_weights)
+w <- exp(log_ratios)
 draws_list <- rstan::extract(fit, c("K", "sigma"))
 draws_df <- posterior::as_draws_df(draws_list)
 resampled_df <- posterior::resample_draws(draws_df,
-  weights = w
+                                          weights = w
 )
 
 print(draws_df %>% posterior::summarize_draws())
