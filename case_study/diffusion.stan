@@ -1,3 +1,5 @@
+// diffusion.stan
+
 functions {
   // Solve a symmetric tridiagonal linear system Ax = d with constant
   // secondary diagonals

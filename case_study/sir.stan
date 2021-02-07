@@ -1,43 +1,39 @@
+// sir.stan
+
 functions {
   // SIR system right-hand side
   real[] stan_sir(real t, real[] y, real[] theta, real[] x_r, int[] x_i) {
-    
     real S = y[1];
     real I = y[2];
     real R = y[3];
-    real N = x_i[1];
-    
+    real M = x_i[1];
     real beta = theta[1];
     real gamma = theta[2];
-    
-    real dS_dt = -beta * I * S / N;
-    real dI_dt =  beta * I * S / N - gamma * I;
+    real dS_dt = -beta * I * S / M;
+    real dI_dt =  beta * I * S / M - gamma * I;
     real dR_dt =  gamma * I;
-    
     return { dS_dt, dI_dt, dR_dt };
   }
   
   // Solve the SIR system
-  vector stan_solve_sir(real[] y0, real[] ts, real[] theta,
-      data real[] x_r, data int M, data real rtol, data real atol,
-      data real max_num_steps) {
-    int n_days = num_elements(ts);
-    int x_i[1] = { M };
-    real f[n_days, 3] = integrate_ode_rk45(stan_sir, y0, 0.0, ts, theta, 
+  vector stan_solve_sir(data real[] ts, real[] theta,
+      data real[] x_r,
+      data real rtol, data real atol, data int max_num_steps) {
+    int N = num_elements(ts);
+    int M = 1000; // population size
+    int I0 = 20; // number of infected on day 0
+    int x_i[1] = { M }; // population size
+    real y0[3] = { M - I0, I0, 0.0 }; // S, I, R on day 0
+    real f[N, 3] = integrate_ode_rk45(stan_sir, y0, 0.0, ts, theta, 
       x_r, x_i, rtol, atol, max_num_steps);
     return(to_vector(f[, 2]));
   }
-  
 }
 
 data {
-  int<lower=1> N;             // Number of observations
-  real ts[N];                 // Observation times
-  int y[N];               // Counts of infected people
-  int M;                      // Population size
-  real initial_conditions[3]; // Initial state (day 0)
-  
-  // Control parameters
+  int<lower=1> N;         // Number of observations
+  real t_data[N];         // Observation times
+  int y_data[N];          // Counts of infected people
   real<lower=0.0> rtol;
   real<lower=0.0> atol;
   int<lower=1> max_num_steps;
@@ -54,8 +50,8 @@ parameters {
 }
 
 transformed parameters{
-  vector[N] mu = stan_solve_sir(initial_conditions, ts, { beta, gamma },
-                                 x_r, M, rtol, atol, max_num_steps);
+  vector[N] mu = stan_solve_sir(t_data, { beta, gamma },
+                                 x_r, rtol, atol, max_num_steps);
 }
 
 model {
@@ -64,5 +60,5 @@ model {
   phi ~ lognormal(1, 1);
   
   // Add small positive number to solution to avoid negative numbers
-  y ~ neg_binomial_2(mu + 2.0 * atol, phi);
+  y_data ~ neg_binomial_2(mu + 2.0 * atol, phi);
 }
