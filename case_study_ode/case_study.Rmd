@@ -1,5 +1,5 @@
 ---
-title: "Fast and reliable use of numerical solvers"
+title: "Reliable and efficient numerical integration of ODEs"
 date: "`r Sys.Date()`"
 author: "Juho Timonen, Ben Bales, Harri Lähdesmäki and Aki Vehtari"
 link-citations: true
@@ -21,61 +21,34 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r load, message=FALSE}
 # Requirements
-require(rstan)
-require(tidyverse)
+require(cmdstanr)
 require(bayesplot)
 require(ggplot2)
 require(loo)
 require(stats)
-require(posterior)
-require(ggpubr)
 
 rng_seed_r <- 999 # rng seed for MCMC
 rng_seed_stan <- 123 # rng seed for data simulation
 set.seed(rng_seed_r)
-
-# A function to get a data frame with param draws and chains ids
-get_draws <- function(fit, pars) {
-  draws_3d <- rstan::extract(fit, pars = pars, permute = FALSE)
-  n_draws <- dim(draws_3d)[1]
-  n_chains <- dim(draws_3d)[2]
-  draws_2d <- c()
-  chain_id <- rep(1:n_chains, each = n_draws)
-  for (j in seq_len(n_chains)) {
-    draws_2d <- rbind(draws_2d, draws_3d[,j,])
-  }
-  draws_2d <- cbind(as.factor(chain_id), draws_2d)
-  colnames(draws_2d) <- c("chain_id", pars)
-  data.frame(draws_2d)
-}
-
-# Colored pairs plot of MCMC draws
-scatter_colored <- function(df, x, y, color_by) {
-  aest <- aes_string(x = x, y = y, color = color_by)
-  a <- ggplot(df, aest) + geom_point() + scale_color_viridis_c()
-  return(a)
-}
 ```
-
-The required `posterior` package is not in CRAN but can be installed via 
-`install.packages("posterior", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))`.
 
 # Introduction
 
-An ordinary differential equation (ODE) 
+Ordinary differential equations (ODEs) 
 
 \begin{equation}
-\frac{d \textbf{x}(t)}{dt} = f_{\theta}(\textbf{x}(t), t)
+\frac{\text{d} \textbf{y}(t)}{\text{d} t} = f_{\theta}(\textbf{y}(t), t)
 \end{equation}
 
-accompanied by an initial value $\textbf{x}(t_0) = \textbf{x}_0$ is an example
-of an implicit function definition. If certain smoothness requirements for
-$f_{\theta}$ are satisfied, there exists a unique solution for
-$\textbf{x}(t)$, but it usually has no closed form. If $\textbf{x}(t)$ needs
-to be evaluated at some time point $t \neq t_0$, a numerical solver is needed.
+are a model for the rate of change in in some quantities $\textbf{y}(t)$,
+and are used in many fields of science. It is common that we have
+time-course data $\textbf{y}^{\dagger}_i$, observed 
+at time points $t_i \neq t_0$, and we need to calculate $\textbf{y}(t_i)$ in
+order to compute the likelihood. Given initial value 
+$\textbf{y}(t_0) = \textbf{y}_0$, and assuming some smoothness requirements for
+$f_{\theta}$, there exists a unique solution for
+$\textbf{y}(t)$, $t \in \mathbb{R}$ but it often has no closed form. Numerical methods are then required.
 
-It is common for Bayesian nonlinear ODE models that evaluating the
-likelihood requires solving $\textbf{x}(t)$ numerically at several time points.
 When performing Bayesian inference for the parameters $\theta$
 (and possible other model parameters) using Stan,
 the system needs to be solved numerically on each log posterior probability
@@ -83,14 +56,14 @@ evaluation. Furthermore, Stan needs to compute gradients for these solutions.
 Try as we might, these computations are often expensive and frequently become
 the limiting factors in whatever model they are involved in. The same problem
 can occur also with any other type of model that requires numerically
-solving an implicitly defined function or variable. Partial differential
-equation (PDE) models are an example.
+solving an implicitly defined function or variable, but in this case study
+we focus on ODEs.
 
-The numerical methods for ODEs and PDEs usually involve some discretization in
-space/time, which affects the solver accuracy. Denser discretization means
+The numerical methods for ODEs usually involve some discretization in
+time, which affects the solver accuracy. Denser discretization means
 more accuracy but also more computation. Alternatively, methods can estimate
-their error and adapt their step size so that a given tolerance is achieved.
-The latter is what the built-in ODE solvers in Stan do.
+their error and adapt their step size or other properties so that a given tolerance is achieved. The latter is what the built-in ODE solvers in Stan do.
+The relationship between tolerance and runtime is 
 
 The simplest things we might do to speed up our calculations are lowering
 the timestep, coarsening the discretization, or increasing the tolerance of the
@@ -100,7 +73,7 @@ original method giving correct inference results to begin with? Are the default
 tolerances in Stan suitable for the problem at hand?
 
 The solution provided by a numerical method is always an approximation to the
-true solution $\textbf{x}(t)$. This is why our
+true solution $\textbf{y}(t)$. This is why our
 posterior probability density evaluations are also approximations and
 the whole MCMC inference can be thought to be biased to some degree. However,
 we can think that the inference results are correct if making the numerical
@@ -218,6 +191,7 @@ The states of the ODE are amounts of susceptible (S), infected (I) and recovered
 where $N_{pop}$ is the population size. The parameters $\beta$ and $\gamma$
 will be estimated from time series observations of the number of infected
 people (I).
+
 
 ```{r sir_model, message=FALSE, results=FALSE}
 model <- stan_model("sir.stan")
@@ -570,3 +544,5 @@ if (khat1 > 0.5) {
 ```
 
 # References
+
+
