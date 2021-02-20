@@ -2,7 +2,7 @@
 
 functions {
   // SIR system right-hand side
-  real[] stan_sir(real t, real[] y, real[] theta, real[] x_r, int[] x_i) {
+  real[] derivative_fun(real t, real[] y, real[] theta, real[] x_r, int[] x_i) {
     real S = y[1];
     real I = y[2];
     real R = y[3];

@@ -1,5 +1,5 @@
 ---
-title: "Reliable and efficient numerical integration of ODEs"
+title: "Reliable and efficient ODE model inference"
 date: "`r Sys.Date()`"
 author: "Juho Timonen, Ben Bales, Harri Lähdesmäki and Aki Vehtari"
 link-citations: true
@@ -34,36 +34,45 @@ set.seed(rng_seed_r)
 
 # Introduction
 
+## ODEs
+
 Ordinary differential equations (ODEs) 
 
 \begin{equation}
 \frac{\text{d} \textbf{y}(t)}{\text{d} t} = f_{\theta}(\textbf{y}(t), t)
 \end{equation}
 
-are a model for the rate of change in in some quantities $\textbf{y}(t)$,
-and are used in many fields of science. It is common that we have
-time-course data $\textbf{y}^{\dagger}_i$, observed 
-at time points $t_i \neq t_0$, and we need to calculate $\textbf{y}(t_i)$ in
-order to compute the likelihood. Given initial value 
-$\textbf{y}(t_0) = \textbf{y}_0$, and assuming some smoothness requirements for
-$f_{\theta}$, there exists a unique solution for
-$\textbf{y}(t)$, $t \in \mathbb{R}$ but it often has no closed form. Numerical methods are then required.
+are a model for the rate of change in some quantities $\textbf{y}(t)$, and are used in many fields of science. It is common that we have time-course data $\textbf{y}^{\dagger}_i$, observed at time points $t_i \neq t_0$, and we need to calculate $\textbf{y}(t_i)$ in order to compute the likelihood. Given initial value  $\textbf{y}(t_0) = \textbf{y}_0$, and assuming some smoothness requirements for $f_{\theta}$, there exists a unique solution for $\textbf{y}(t)$, $t \in \mathbb{R}$. This solution is given by the integral formula
+
+\begin{equation}
+\textbf{y}(t) = \textbf{y}_0 + \int_{t_0}^t f_{\theta}(\textbf{y}(\tau), \tau) 
+\text{d} \tau,
+\end{equation}
+
+but the integral usually doesn't have a closed form, and numerical methods are required.
+
+## Numerical integration methods
+
+Simplest numerical methods for integrating ODEs usually involve some
+discretization in time, which affects the solver accuracy. Denser 
+discretization means more accuracy but also more computation, as more time
+steps need to be taken. Alternatively, methods can estimate
+their error and adapt their step size or other properties so that a given tolerance is achieved. The latter is what the built-in ODE solvers in Stan do.
+The relationship between tolerance and runtime is 
+
+
+## Computational challenges
 
 When performing Bayesian inference for the parameters $\theta$
-(and possible other model parameters) using Stan,
-the system needs to be solved numerically on each log posterior probability
-evaluation. Furthermore, Stan needs to compute gradients for these solutions.
-Try as we might, these computations are often expensive and frequently become
+(and possible other model parameters, note that also $\textbf{y}_0$ can be a
+parameter) using Stan, the system needs to be solved numerically on each log
+posterior probability evaluation. Furthermore, Stan needs to compute gradients
+for these solutions. Try as we might, these computations are often expensive
+and frequently become
 the limiting factors in whatever model they are involved in. The same problem
 can occur also with any other type of model that requires numerically
 solving an implicitly defined function or variable, but in this case study
 we focus on ODEs.
-
-The numerical methods for ODEs usually involve some discretization in
-time, which affects the solver accuracy. Denser discretization means
-more accuracy but also more computation. Alternatively, methods can estimate
-their error and adapt their step size or other properties so that a given tolerance is achieved. The latter is what the built-in ODE solvers in Stan do.
-The relationship between tolerance and runtime is 
 
 The simplest things we might do to speed up our calculations are lowering
 the timestep, coarsening the discretization, or increasing the tolerance of the
@@ -191,6 +200,7 @@ The states of the ODE are amounts of susceptible (S), infected (I) and recovered
 where $N_{pop}$ is the population size. The parameters $\beta$ and $\gamma$
 will be estimated from time series observations of the number of infected
 people (I).
+
 
 
 ```{r sir_model, message=FALSE, results=FALSE}
@@ -544,5 +554,3 @@ if (khat1 > 0.5) {
 ```
 
 # References
-
-
