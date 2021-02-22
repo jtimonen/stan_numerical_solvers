@@ -38,7 +38,8 @@ solve_lv <- function(model, theta, t_eval, h) {
     y_rk4 = get_output(fit, "y_rk4", 1, 1),
     y_ref = get_output(fit, "y_ref", 1, 1),
     theta = as.vector(fit$draws(variables = "theta")[1,1,]),
-    t_grid = seq(0, num_steps * h, by = h)
+    t_grid = seq(0, num_steps * h, by = h),
+    t_eval = t_eval
   )
 }
 
@@ -75,8 +76,8 @@ plot_lv <- function(dat, out) {
          xlim = c(0, T_max), ylim = c(0, 3.6),
          xlab = "t", ylab = paste0("y", j)
     )
-    lines(t_eval, out$y_ref[, j], col = cols[1])
-    lines(t_eval, out$y_rk4[, j], col = cols[2], lty = 2)
+    lines(out$t_eval, out$y_ref[, j], col = cols[1])
+    lines(out$t_eval, out$y_rk4[, j], col = cols[2], lty = 2)
     points(out$t_grid, out$y_grid_rk4[, j], col = cols[2], pch = 4)
     legend(
       x = 9.5, y = 3.5, lty = c(1, 2), lwd = 2, col = cols,

@@ -16,7 +16,6 @@ data {
 transformed data {
   int a0[0];
   int G = num_steps + 1;
-  real sigma = 0.3;
   real t_grid[G];
   t_grid[1] = t0;
   for (j in 1:num_steps) {
@@ -26,17 +25,33 @@ transformed data {
 
 parameters {
   vector<lower=0>[2] theta;
+  real<lower=0> sigma;
 }
 
 transformed parameters {
-  vector[2] y_grid_rk4[G] = odeint_rk4(t0, y0, h, num_steps, a0, theta);
-  vector[2] y_rk4[N] = interp_1d_cubic(y_grid_rk4, t_grid, t_eval, a0, theta);
-  //vector[2] y_ref[N] = ode_rk45(derivative_fun, y0, t0, t_eval, a0, theta);
+  vector[2] y_inf[N];
+  {
+    vector[2] y_grid[G] = odeint_rk4(t0, y0, h, num_steps, a0, theta);
+    y_inf = interp_1d_cubic(y_grid, t_grid, t_eval, a0, theta);
+  }
 }
 
 model {
   theta ~ normal(1, 0.3);
-  for (n in 1:N) {
-    y_data[n] ~ normal(y_rk4[n], sigma);
+  sigma ~ inv_gamma(5, 5);
+  for (n in 1:N) target += normal_lpdf(y_data[n] | y_inf[n], sigma);
+}
+
+generated quantities {
+  real log_ratio;
+  {
+    real log_lik_inf = 0.0;
+    real log_lik_ref = 0.0;
+    vector[2] y_ref[N] = ode_rk45(derivative_fun, y0, t0, t_eval, a0, theta);
+    for (n in 1:N) {
+      log_lik_inf += normal_lpdf(y_data[n] | y_inf[n], sigma);
+      log_lik_ref += normal_lpdf(y_data[n] | y_ref[n], sigma);
+    }
+    log_ratio = log_lik_inf - log_lik_ref;
   }
 }
