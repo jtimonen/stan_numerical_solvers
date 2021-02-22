@@ -5,7 +5,7 @@ source("functions.R")
 model_sim <- cmdstan_model("stan/lv_sim.stan", include_paths = "stan")
 
 # Simulate data
-N <- 300
+N <- 300 # set this to larger value
 D <- 2
 theta <- c(1.2, 0.8)
 t_data <- seq(12/N, 12, length.out = N) + 0.3 * rnorm(n = length(N))
