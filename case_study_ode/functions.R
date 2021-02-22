@@ -55,7 +55,7 @@ sample_lv <- function(model, data, h, tol, solver, ...) {
   num_steps <- ceiling(max(t_data) / h)
   stan_data <- list(
     N = N, t_eval = t_data, y0 = y0, t0 = t0,
-    h = h, num_steps = num_steps, y_data = t(y_data),
+    h = h, num_steps = num_steps, y_data = y_data,
     SOLVER = solver, ATOL = tol, RTOL = tol, max_num_steps = 1e5
   )
 

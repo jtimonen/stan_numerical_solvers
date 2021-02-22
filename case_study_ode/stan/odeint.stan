@@ -48,7 +48,7 @@ vector[] interp_1d_cubic(vector[] y, data real[] x, data real[] x_out,
   vector[N_out] x_out_vec = to_vector(x_out);
   vector[D] f_left;
   vector[D] f_right;
-  vector[N_out] y_out[D];
+  vector[D] y_out[N_out];
   for (i in 1:(N_in-1)) {
     
     int i0 = interval_idx[i,1];
@@ -72,9 +72,9 @@ vector[] interp_1d_cubic(vector[] y, data real[] x, data real[] x_out,
       f_right = derivative_fun(0.0, y[i+1], a0, theta);
     
       // Compute interpolation
-      for(d in 1:D) {
-        y_out[d][i0:i1] = h00*y[i,d] + dx*h10*f_left[d] + 
-        h01*y[i+1, d] + dx*h11*f_right[d];
+      for (a in 1:L) {
+        y_out[i0 - 1 + a] = h00[a]*y[i] + dx*h10[a]*f_left + 
+          h01[a]*y[i+1] + dx*h11[a]*f_right;
       }
     }
   }

@@ -6,7 +6,7 @@ functions {
 data {
   int<lower=1> N;
   real t_eval[N]; // must be increasing
-  vector[N] y_data[2];
+  vector[2] y_data[N];
   vector[2] y0;
   real t0;
   int<lower=1> num_steps; // number of steps
@@ -37,20 +37,20 @@ parameters {
 }
 
 transformed parameters {
-  vector[N] y_hat[2];
+  vector[2] y_hat[N];
   if (SOLVER == 0) {
     vector[2] y_grid[G] = odeint_rk4(t0, y0, h, num_steps, a0, theta);
     y_hat = interp_1d_cubic(y_grid, t_grid, t_eval, interval_idx, a0, theta);
   } else {
-    //y_hat = ode_rk45_tol(derivative_fun, y0, t0, t_eval, 
-    //  RTOL, ATOL, max_num_steps, a0, theta);
+    y_hat = ode_rk45_tol(derivative_fun, y0, t0, t_eval, 
+      RTOL, ATOL, max_num_steps, a0, theta);
   }
 }
 
 model {
   theta ~ normal(1, 0.3);
   sigma ~ inv_gamma(5, 5);
-  for(j in 1:2){
-    target += normal_lpdf(y_data[j] | y_hat[j], sigma); 
+  for(n in 1:N){
+    target += normal_lpdf(y_data[n] | y_hat[n], sigma); 
   }
 }
