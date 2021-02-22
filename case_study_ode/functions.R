@@ -11,7 +11,7 @@ get_output <- function(fit, name, chain_idx, draw_idx) {
 
 # Function
 solve_lv <- function(model, theta, t_eval, h) {
-  
+
   # Create input
   y0 <- c(1, 2)
   t0 <- 0
@@ -21,7 +21,7 @@ solve_lv <- function(model, theta, t_eval, h) {
     N = N, t_eval = t_eval, y0 = y0, t0 = t0,
     h = h, num_steps = num_steps
   )
-  
+
   # Run Stan
   fit <- model$sample(
     data = stan_data,
@@ -31,21 +31,21 @@ solve_lv <- function(model, theta, t_eval, h) {
     init = list(list(theta = theta)),
     refresh = 0
   )
-  
+
   # Get output
   list(
     y_grid_rk4 = get_output(fit, "y_grid_rk4", 1, 1),
     y_rk4 = get_output(fit, "y_rk4", 1, 1),
     y_ref = get_output(fit, "y_ref", 1, 1),
-    theta = as.vector(fit$draws(variables = "theta")[1,1,]),
+    theta = as.vector(fit$draws(variables = "theta")[1, 1, ]),
     t_grid = seq(0, num_steps * h, by = h),
     t_eval = t_eval
   )
 }
 
 # Function
-sample_lv <- function(model, data, h, ...){
-  
+sample_lv <- function(model, data, h, tol, solver, ...) {
+
   # Create input
   y0 <- c(1, 2)
   t0 <- 0
@@ -55,9 +55,10 @@ sample_lv <- function(model, data, h, ...){
   num_steps <- ceiling(max(t_data) / h)
   stan_data <- list(
     N = N, t_eval = t_data, y0 = y0, t0 = t0,
-    h = h, num_steps = num_steps, y_data = y_data
+    h = h, num_steps = num_steps, y_data = t(y_data),
+    SOLVER = solver, ATOL = tol, RTOL = tol, max_num_steps = 1e5
   )
-  
+
   # Run Stan
   fit <- model$sample(data = stan_data, ...)
   return(fit)
@@ -65,16 +66,15 @@ sample_lv <- function(model, data, h, ...){
 
 # Function
 plot_lv <- function(dat, out) {
-  
   par(mfrow = c(2, 1))
   par(mar = c(2.25, 4, 1, 1))
   cols <- c("steelblue", "firebrick3")
   T_max <- max(dat$t_data)
   for (j in 1:2) {
     plot(dat$t_data, dat$y_data[, j],
-         col = "black", pch = 16,
-         xlim = c(0, T_max), ylim = c(0, 3.6),
-         xlab = "t", ylab = paste0("y", j)
+      col = "black", pch = 16,
+      xlim = c(0, T_max), ylim = c(0, 3.6),
+      xlab = "t", ylab = paste0("y", j)
     )
     lines(out$t_eval, out$y_ref[, j], col = cols[1])
     lines(out$t_eval, out$y_rk4[, j], col = cols[2], lty = 2)
@@ -84,4 +84,12 @@ plot_lv <- function(dat, out) {
       legend = c("rk45", "rk4")
     )
   }
+}
+
+runtime_info <- function(fit) {
+  times <- fit$time()$chains$total
+  m <- round(mean(times), 4)
+  s <- round(stats::sd(times), 4)
+  msg <- paste0("Time per chain = ", m, " (+/- ",  s, ") seconds.\n")
+  cat(msg)
 }
