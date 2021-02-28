@@ -45,7 +45,7 @@ model {
   vector[3] y_hat[N];
   {
     vector[2] theta = to_vector({beta, gamma});
-    y_hat = ode_bdf_tol(derivative_fun, y0, t0, t_data, 
+    y_hat = ode_rk45_tol(derivative_fun, y0, t0, t_data, 
       RTOL, ATOL, MAX_NUM_STEPS, a0, theta);
   }
   

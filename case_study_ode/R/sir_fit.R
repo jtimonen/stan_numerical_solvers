@@ -15,8 +15,8 @@ t_data <- dat$t_data
 y_data <- dat$y_data
 
 # Setup
-rtol <- 1e-6 # 1e-3  much slower
-atol <- 1e-6
+rtol <- 1e-3 # 1e-3  much slower than 1e-6 (if using bdf)
+atol <- 1e-3
 max_num_steps <- 1e6
 
 # Fit model
