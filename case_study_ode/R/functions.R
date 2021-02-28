@@ -1,4 +1,5 @@
 
+
 # Function
 get_output <- function(fit, name, chain_idx, draw_idx) {
   y_out <- fit$draws(variables = name)
