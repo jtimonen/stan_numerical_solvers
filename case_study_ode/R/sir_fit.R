@@ -1,21 +1,38 @@
 library(cmdstanr)
 library(posterior)
 library(loo)
-source("functions.R")
+source("sir_functions.R")
 
-# Compile model
-model <- cmdstan_model("stan/lv.stan", include_paths = "stan")
-model_sim <- cmdstan_model("stan/lv_sim.stan", include_paths = "stan")
+# Compile models
+f1 <- "../stan/sir_fixedparam.stan"
+f2 <- "../stan/sir.stan"
+model_fp <- cmdstan_model(f1, include_paths = "../stan")
+model <- cmdstan_model(f2, include_paths = "../stan")
 
 # Load test data
-dat <- readRDS(file = "data_small.rds")
+dat <- readRDS(file = "../data/data_sir.rds")
+t_data <- dat$t_data
+y_data <- dat$y_data
+
+# Setup
+rtol <- 1e-6
+atol <- 1e-6
+max_num_steps <- 1e6
 
 # Fit model
-h <- 1.0
-tol <- 1e-6
-fit <- sample_lv(model, dat, h, tol = tol,
-  solver = 0, refresh = 1000, chains = 10, init = 0
+N <- length(t_data)
+stan_data <- list(N = N, 
+                  t_data = t_data, 
+                  y_data = y_data,
+                  RTOL = rtol,
+                  ATOL = atol, 
+                  MAX_NUM_STEPS = max_num_steps, 
+                  pop_size = 1000,
+                  I0 = 15
 )
+fit <- model$sample(data = stan_data, init = 0, refresh = 1)
+t1 <- fit$time()$total
+print(t1)
 
 # Plot solution with posterior mean params
 theta_mean <- apply(fit$draws(variables = "theta"), 3, mean)

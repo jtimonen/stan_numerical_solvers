@@ -1,32 +1,38 @@
 functions {
-
-  
-  // Solve the SIR system
-  vector stan_solve_sir(data real[] ts, real[] theta,
-      data real[] x_r,
-      data real rtol, data real atol, data int max_num_steps) {
-    int N = num_elements(ts);
-    int M = 1000; // population size
-    int I0 = 20; // number of infected on day 0
-    int x_i[1] = { M }; // population size
-    real y0[3] = { M - I0, I0, 0.0 }; // S, I, R on day 0
-    real f[N, 3] = integrate_ode_rk45(stan_sir, y0, 0.0, ts, theta, 
-      x_r, x_i, rtol, atol, max_num_steps);
-    return(to_vector(f[, 2]));
+  // SIR system right-hand side
+  vector derivative_fun(real t, vector y, data int[] a0, vector theta) {
+    int pop_size = a0[1];
+    vector[3] dy_dt;
+    real S = y[1];
+    real I = y[2];
+    real R = y[3];
+    real beta = theta[1];
+    real gamma = theta[2];
+    real infection_rate = beta * I * S / pop_size;
+    real recovery_rate = gamma * I;
+    dy_dt[1] = - infection_rate;
+    dy_dt[2] = infection_rate - recovery_rate;
+    dy_dt[3] = recovery_rate;
+    return dy_dt;
   }
 }
 
 data {
-  int<lower=1> N;         // Number of observations
-  real t_data[N];         // Observation times
-  int y_data[N];          // Counts of infected people
-  real<lower=0.0> rtol;
-  real<lower=0.0> atol;
-  int<lower=1> max_num_steps;
+  int<lower=1> N; // number of observations
+  real t_data[N]; // data time points, must be increasing
+  int<lower=1> pop_size; // population size
+  real<lower=1> I0; // initial number of infected
+  real<lower=0> RTOL;
+  real<lower=0> ATOL;
+  int<lower=1> MAX_NUM_STEPS;
+  
+  int y_data[N]; // measurements of infected
 }
 
 transformed data {
-  real x_r[0];
+  real t0 = 0.0;
+  int a0[1] = {pop_size};
+  vector[3] y0 = to_vector({pop_size - I0, I0, 0.0}); // {S, I, R}
 }
 
 parameters {
@@ -35,16 +41,23 @@ parameters {
   real<lower=0> phi;
 }
 
-transformed parameters{
-  vector[N] mu = stan_solve_sir(t_data, { beta, gamma },
-                                 x_r, rtol, atol, max_num_steps);
+transformed parameters {
+  real phi_inv = 1.0 / phi;
 }
 
 model {
-  beta ~ normal(2, 1);
-  gamma ~ normal(0.4, 0.5);
-  phi ~ lognormal(1, 1);
+  beta ~ gamma(5, 5);
+  gamma ~ gamma(5, 5);
+  phi_inv ~ gamma(10, 15);
+  vector[3] y_hat[N];
+  {
+    vector[2] theta = to_vector({beta, gamma});
+    y_hat = ode_bdf_tol(derivative_fun, y0, t0, t_data, 
+      RTOL, ATOL, MAX_NUM_STEPS, a0, theta);
+  }
   
   // Add small positive number to solution to avoid negative numbers
-  y_data ~ neg_binomial_2(mu + 2.0 * atol, phi);
+  for(n in 1:N) {
+    target += neg_binomial_2_lpmf(y_data[n] | y_hat[n] + 2.0 * ATOL, phi);
+  }
 }

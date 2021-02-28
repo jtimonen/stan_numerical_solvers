@@ -3,9 +3,16 @@ functions {
   vector derivative_fun(real t, vector y, data int[] a0, vector theta) {
     int pop_size = a0[1];
     vector[3] dy_dt;
-    dy_dt[1] = -theta[1] * y[2] * y[1] / pop_size;
-    dy_dt[2] =  theta[1] * y[2] * y[3] / pop_size - theta[2] * y[2];
-    dy_dt[3] =  theta[2] * y[2];
+    real S = y[1];
+    real I = y[2];
+    real R = y[3];
+    real beta = theta[1];
+    real gamma = theta[2];
+    real infection_rate = beta * I * S / pop_size;
+    real recovery_rate = gamma * I;
+    dy_dt[1] = - infection_rate;
+    dy_dt[2] = infection_rate - recovery_rate;
+    dy_dt[3] = recovery_rate;
     return dy_dt;
   }
 }
@@ -30,11 +37,11 @@ transformed data {
 }
 
 parameters {
-  real dummy; //ignore this
+  real dummy;
 }
 
 generated quantities {
-  vector[2] y_hat[S, N];
+  vector[3] y_hat[S, N];
   for(s in 1:S) {
     y_hat[s, :] = ode_rk45_tol(derivative_fun, y0, t0, t_eval, 
       RTOL, ATOL, MAX_NUM_STEPS, a0, THETA[s]);
