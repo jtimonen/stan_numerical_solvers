@@ -36,19 +36,12 @@ transformed data {
 }
 
 parameters {
-  real<lower=0> beta;
-  real<lower=0> gamma;
-  real<lower=0> phi;
-}
-
-transformed parameters {
-  real phi_inv = 1.0 / phi;
+  real<lower=0.05, upper = 3> beta;
+  real<lower=0.05, upper = 3> gamma;
+  real<lower=0.1, upper = 10> phi;
 }
 
 model {
-  beta ~ gamma(5, 5);
-  gamma ~ gamma(5, 5);
-  phi_inv ~ gamma(10, 15);
   vector[3] y_hat[N];
   {
     vector[2] theta = to_vector({beta, gamma});
@@ -58,6 +51,6 @@ model {
   
   // Add small positive number to solution to avoid negative numbers
   for(n in 1:N) {
-    target += neg_binomial_2_lpmf(y_data[n] | y_hat[n] + 2.0 * ATOL, phi);
+    target += neg_binomial_2_lpmf(y_data[n] | y_hat[n] + 10*ATOL, phi);
   }
 }
