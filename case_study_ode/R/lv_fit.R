@@ -4,11 +4,11 @@ library(loo)
 source("functions.R")
 
 # Compile model
-model <- cmdstan_model("stan/lv.stan", include_paths = "stan")
-model_sim <- cmdstan_model("stan/lv_sim.stan", include_paths = "stan")
+model <- cmdstan_model("../stan/lv.stan", include_paths = "../stan")
+model_sim <- cmdstan_model("../stan/lv_sim.stan", include_paths = "../stan")
 
 # Load test data
-dat <- readRDS(file = "data_small.rds")
+dat <- readRDS(file = "../data/data_lv.rds")
 
 # Fit model
 h <- 1.0

@@ -2,7 +2,7 @@ library(cmdstanr)
 source("functions.R")
 
 # Compile model
-model_sim <- cmdstan_model("stan/lv_sim.stan", include_paths = "stan")
+model_sim <- cmdstan_model("../stan/lv_sim.stan", include_paths = "stan")
 
 # Simulate data
 N <- 30
@@ -24,4 +24,4 @@ dat <- list(t_data = t_data, y_data = y_data, N = N, D = D)
 plot_lv(dat, out)
 
 # Write to file
-saveRDS(file = "data_small.rds", dat)
+saveRDS(file = "../data/data_lv.rds", dat)
