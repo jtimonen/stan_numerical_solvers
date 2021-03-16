@@ -14,7 +14,7 @@ dat <- readRDS(file = "../data/data_lv.rds")
 h <- 1.0
 tol <- 1e-6
 fit <- sample_lv(model, dat, h, tol = tol,
-  solver = 0, refresh = 1000, chains = 10, init = 0
+  solver = 0, chains = 10, init = 0
 )
 
 # Plot solution with posterior mean params
@@ -26,7 +26,7 @@ diag <- fit$cmdstan_diagnose()
 
 # Comparison
 fit_ref <- sample_lv(model, dat, h, tol = tol,
-  solver = 1, refresh = 1000, chains = 10, init = 0
+  solver = 1, chains = 10, init = 0
 )
 
 # Print info

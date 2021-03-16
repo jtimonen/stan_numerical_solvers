@@ -12,5 +12,6 @@
 
 *_files/
 *_cache/
+*.exe
 
 .Rproj.user
