@@ -34,5 +34,5 @@ generated quantities {
   vector[2] y_grid_rk4[G] = odeint_rk4(t0, y0, h, num_steps, a0, theta);
   vector[2] y_rk4[N] = interp_1d_cubic(y_grid_rk4, t_grid, t_eval, 
     interval_idx, a0, theta);
-  vector[2] y_ref[N] = ode_rk45(derivative_fun, y0, t0, t_eval, a0, theta);
+  vector[2] y_ref[N] = ode_bdf(derivative_fun, y0, t0, t_eval, a0, theta);
 }

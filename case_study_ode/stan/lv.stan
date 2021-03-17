@@ -42,7 +42,7 @@ transformed parameters {
     vector[2] y_grid[G] = odeint_rk4(t0, y0, h, num_steps, a0, theta);
     y_hat = interp_1d_cubic(y_grid, t_grid, t_eval, interval_idx, a0, theta);
   } else {
-    y_hat = ode_rk45_tol(derivative_fun, y0, t0, t_eval, 
+    y_hat = ode_bdf_tol(derivative_fun, y0, t0, t_eval, 
       RTOL, ATOL, max_num_steps, a0, theta);
   }
 }
