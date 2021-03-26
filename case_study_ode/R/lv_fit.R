@@ -2,7 +2,9 @@ library(cmdstanr)
 library(posterior)
 library(loo)
 source("functions.R")
-set_cmdstan_path("/Users/juhotimonen/Work/research/STAN-FORK/cmdstan")
+#path <- "/Users/juhotimonen/Work/research/stan-dev/cmdstan-2.26.1/"
+path <- "/Users/juhotimonen/Work/research/stan-dev/cmdstan"
+set_cmdstan_path(path)
 
 # Compile model
 model <- cmdstan_model("../stan/lv.stan", include_paths = "../stan")

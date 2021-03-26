@@ -1,0 +1,7 @@
+WITH  N=20, max_num_steps = 100
+
+Chain 4 Iteration:  200 / 2000 [ 10%]  (Warmup) 
+Chain 4 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:
+Chain 4 Exception: ode_rk45_tol:  Failed to integrate to next output time (1.118) in less than max_num_steps steps (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpMeipSK/model-149e2dffae28.stan', line 7, column 4 to column 16)
+
+WITH  N=20, max_num_steps = 10
