@@ -31,7 +31,7 @@ parameters {
 model {
   theta ~ normal(1, 0.3);
   sigma ~ normal(0, 2.0);
-  vector[2] y_hat[N] = ode_rk45_tol(derivative_fun, y0, t0, t_eval,
+  vector[2] y_hat[N] = ode_bdf_tol(derivative_fun, y0, t0, t_eval,
     REL_TOL, ABS_TOL, MAX_NUM_STEPS, a0, theta);
   for(n in 1:N){
     target += normal_lpdf(y_data[n] | y_hat[n], sigma); 

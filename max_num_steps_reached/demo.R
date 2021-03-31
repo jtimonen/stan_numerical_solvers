@@ -23,7 +23,7 @@ stan_data <- list(
   y_data = y_data,
   REL_TOL = 1e-6,
   ABS_TOL = 1e-6,
-  MAX_NUM_STEPS = 3
+  MAX_NUM_STEPS = 30
 )
 
 fit <- model$sample(data = stan_data)
