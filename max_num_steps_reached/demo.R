@@ -26,7 +26,7 @@ stan_data <- list(
   MAX_NUM_STEPS = 30
 )
 
-fit <- model$sample(data = stan_data)
+fit <- model$sample(data = stan_data, refresh = 1, chains = 4)
 
 # Print results
 t <- fit$time()$total
