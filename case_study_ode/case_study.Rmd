@@ -21,11 +21,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r load, message=FALSE}
 # Requirements
-require(cmdstanr)
-require(bayesplot)
-require(ggplot2)
-require(loo)
-require(stats)
+library(cmdstanr)
+library(bayesplot)
+library(ggplot2)
+library(loo)
+library(stats)
 
 rng_seed_r <- 999 # rng seed for MCMC
 rng_seed_stan <- 123 # rng seed for data simulation
@@ -42,7 +42,8 @@ Ordinary differential equations (ODEs)
 \frac{\text{d} \textbf{y}(t)}{\text{d} t} = f_{\theta}(\textbf{y}(t), t)
 \end{equation}
 
-are a model for the rate of change in some quantities $\textbf{y}(t)$, and are used in many fields of science. It is common that we have time-course data $\textbf{y}^{\dagger}_i$, observed at time points $t_i \neq t_0$, and we need to calculate $\textbf{y}(t_i)$ in order to compute the likelihood. Given initial value  $\textbf{y}(t_0) = \textbf{y}_0$, and assuming some smoothness requirements for $f_{\theta}$, there exists a unique solution for $\textbf{y}(t)$, $t \in \mathbb{R}$. This solution is given by the integral formula
+are a model for the rate of change in some quantities $\textbf{y}(t)$, and are used in many fields of science. It is common that we have time-course data $\textbf{y}^{\dagger}_i$, observed at time points $t_i \neq t_0$, and we need to calculate $\textbf{y}(t_i)$ in order to compute likelihood of the data, given
+our model. Given initial value  $\textbf{y}(t_0) = \textbf{y}_0$, and assuming some smoothness requirements for $f_{\theta}$, there exists a unique solution for $\textbf{y}(t)$, $t \in \mathbb{R}$. This solution is given by the integral formula
 
 \begin{equation}
 \textbf{y}(t) = \textbf{y}_0 + \int_{t_0}^t f_{\theta}(\textbf{y}(\tau), \tau) 
@@ -51,28 +52,54 @@ are a model for the rate of change in some quantities $\textbf{y}(t)$, and are u
 
 but the integral usually doesn't have a closed form, and numerical methods are required.
 
-## Numerical integration methods
-
-Simplest numerical methods for integrating ODEs usually involve some
-discretization in time, which affects the solver accuracy. Denser 
-discretization means more accuracy but also more computation, as more time
-steps need to be taken. Alternatively, methods can estimate
-their error and adapt their step size or other properties so that a given tolerance is achieved. The latter is what the built-in ODE solvers in Stan do.
-The relationship between tolerance and runtime is 
-
-
 ## Computational challenges
 
 When performing Bayesian inference for the parameters $\theta$
 (and possible other model parameters, note that also $\textbf{y}_0$ can be a
-parameter) using Stan, the system needs to be solved numerically on each log
-posterior probability evaluation. Furthermore, Stan needs to compute gradients
-for these solutions. Try as we might, these computations are often expensive
-and frequently become
-the limiting factors in whatever model they are involved in. The same problem
-can occur also with any other type of model that requires numerically
-solving an implicitly defined function or variable, but in this case study
-we focus on ODEs.
+parameter) using MCMC methods, the system needs to be solved numerically on each log posterior probability evaluation. Furthermore, when using a gradient
+based MCMCM algorithm like Stan does, also \emph{sensitivities}, i.e. 
+derivatives of the solution w.r.t. parameters, are needed. This is done
+in Stan by numerically solving an extended ODE system consisting of the
+sensitivities and the original dynamical variables. 
+
+The solution provided by a numerical method
+is always an approximation to the true solution. 
+This means that the computed posterior probability density and its
+gradient are also approximations and the whole MCMC inference is biased
+to some degree. So we are performing Bayesian inference for the parameters, the error in the solutions propagates also to the statistical properties of the posterior draws, in ways that cannot be predicted beforehand.
+
+How could this error be studied? If the model parameters are fixed,
+we can verify that the solution at all points is
+appropriately close to a more accurate reference solution. 
+There is a vast amount of classical literature that studies this error, and the ODE solvers built into
+Stan are these classical methods that obtain estimate their error and adapt
+their step size so that a given tolerance is achieved. However, we are doing statistics, and so we need to
+know that the solution is accurate enough across all relevant parts of
+parameter space. Additionally, it is not known beforehand where the 
+"relevant parts of parameter space" are!
+
+The problem of validating the use of a numerical method for a Bayesian model
+is therefore significantly more complicated than in the classical numerical
+analysis world. One idea is to run sampling repeatedly, gradually increasing
+the solver accuracy, until the posterior inference
+results don't change anymore. But this might not
+be computationally very attractive. The numerical methods are often expensive
+and frequently become the limiting factors in whatever model they are involved in. Moreover, achieving more accuracy often comes with the cost of more
+computation time. Note however that there is no direct tradeoff.
+
+These two problems (computational cost and potential unreliability) occur also
+with any other type of model that requires numerically solving an implicitly defined function or variable, but in this case study we focus on ODEs.
+
+The point of this case study is to show how by adding one
+additional tool, namely Pareto-Smoothed Importance Sampling (PSIS) [@yao2018;
+@vehtari2019], we can solve this problem.
+
+
+## Simpler numerical methods
+Simplest numerical methods for integrating ODEs usually involve some
+discretization in time, which affects the solver accuracy. Denser 
+discretization means more accuracy but also more computation, as more time
+steps need to be taken.
 
 The simplest things we might do to speed up our calculations are lowering
 the timestep, coarsening the discretization, or increasing the tolerance of the
@@ -80,30 +107,6 @@ solvers. That immediately leaves us with the question, is this okay? Has
 changing the numerical method affected our parameter inference results? Was our
 original method giving correct inference results to begin with? Are the default
 tolerances in Stan suitable for the problem at hand?
-
-The solution provided by a numerical method is always an approximation to the
-true solution $\textbf{y}(t)$. This is why our
-posterior probability density evaluations are also approximations and
-the whole MCMC inference can be thought to be biased to some degree. However,
-we can think that the inference results are correct if making the numerical
-method more accurate does not affect the statistical properties of the
-posterior draws.
-
-How can something like this be checked? The first problem is that it might not
-be computationally very attractive to run sampling repeatedly, gradually
-increasing the solver accuracy. If the model parameters are fixed,
-we can verify that the solution at all points in space/time is
-appropriately close to a more accurate reference solution. That isn't so much
-of a problem in and of itself, but we are doing statistics, and so we need to
-know that the solution is accurate enough across all relevant parts of
-parameter space. Additionally, it is not known beforehand where the 
-"relevant parts of parameter space" are!
-
-The problem of validating the use of a numerical method for a Bayesian model
-is therefore significantly more complicated than in the classical numerical
-analysis world. The point of this case study is to show how by adding one
-additional tool, namely Pareto-Smoothed Importance Sampling (PSIS) [@yao2018;
-@vehtari2019], we can solve this problem.
 
 # Workflow
 
