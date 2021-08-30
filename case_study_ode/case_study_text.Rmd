@@ -1,0 +1,251 @@
+---
+title: "Reliable and efficient ODE model inference"
+date: "`r Sys.Date()`"
+author: "Juho Timonen, Ben Bales, Harri Lähdesmäki and Aki Vehtari"
+link-citations: true
+output:
+  html_document:
+    number_sections: true
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    highlight: pygments
+    theme: cosmo
+    css: "style.css"
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load, message=FALSE}
+# Requirements
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(ggplot2)
+library(loo)
+library(stats)
+color_scheme_set("brightblue")
+
+rng_seed_r <- 999 # rng seed for MCMC
+rng_seed_stan <- 123 # rng seed for data simulation
+set.seed(rng_seed_r)
+```
+
+# Introduction
+
+## ODEs
+
+Ordinary differential equations (ODEs) 
+
+\begin{equation}
+\frac{\text{d} \textbf{x}(t)}{\text{d} t} = f_{\theta}(\textbf{x}(t), t)
+\end{equation}
+
+are a model for the rate of change in some quantities $\textbf{x}(t)$, and are used in many fields of science. It is common that we have time-course data $\{(t_n, \textbf{y}_n)\}_{n=1}^N$, observed at time points $t_n \neq t_0$, and 
+we need to calculate $\textbf{x}(t_n)$ for each $n=1, \ldots, N$, in order to
+compute likelihood of the data. Given initial value  $\textbf{x}(t_0) = \textbf{x}_0$, and assuming some smoothness requirements for $f_{\theta}$, there exists a unique solution for $\textbf{x}(t)$, $t \in \mathbb{R}$. This solution is given by the integral formula
+
+\begin{equation}
+\textbf{x}(t) = \textbf{x}_0 + \int_{t_0}^t f_{\theta}(\textbf{x}(\tau), \tau) 
+\text{d} \tau,
+\end{equation}
+
+but the integral usually doesn't have a closed form, and numerical methods are required.
+
+## Example: SIR
+
+Here we study a classic Susceptible-Infected-Recovered (SIR) model of disease
+spread. The code is adapted from that in the Stan Case Study [@grinsztajn2020], 
+which provides an introduction to disease
+transmission modeling in Stan in general. The states of the ODE are amounts of susceptible (S), infected (I) and recovered
+(R) people. The dynamics are given by the ODE system:
+
+\begin{align}
+\frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N_{pop}} \\
+\frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N_{pop}} - \gamma \cdot I \\
+\frac{dR}{dt} &=  \gamma \cdot I,
+\end{align}
+where $N_{pop}$ is the population size. Using the above notation, we have
+$\textbf{x}(t) = [S(t), I(t), R(t)]^{\top}$ and $\theta = \{\beta, \gamma\}$. This system can be coded as the following Stan function.
+
+```{r sir_function}
+cat(readLines("stan/functions-SIR.stan"), sep="\n")
+```
+
+We
+```{r sir_model, message=FALSE, results=FALSE}
+mod <- cmdstan_model("stan/sir_simulate.stan", include_paths = "stan")
+```
+
+We print the model code here.
+```{r sir_print}
+```
+
+
+```{r sir_simulate}
+sir_simulate <- function(model, t_sim, beta, gamma, RTOL = 1e-6, ATOL = 1e-6,
+                         MAX_NUM_STEPS = 1e6) {
+  P <- length(t_sim)
+  stan_data <- list(
+    t = t_sim,
+    t_sim = t_sim,
+    N = P,
+    P = P,
+    y = rep(0, P),
+    pop_size = 1000,
+    I0 = 10,
+    RTOL = RTOL,
+    ATOL = ATOL,
+    MAX_NUM_STEPS = MAX_NUM_STEPS
+  )
+  mod$generate_quantities(
+    data = stan_data,
+    fitted_params = draws_array(beta=beta, gamma=gamma)
+  )
+}
+```
+
+
+
+## Computational challenges
+
+When performing Bayesian inference for the parameters $\theta$
+(and possible other model parameters, note that also $\textbf{y}_0$ can be a
+parameter) using MCMC methods, the system needs to be solved numerically on each log posterior probability evaluation. Furthermore, when using a gradient
+based MCMCM algorithm like Stan does, also _sensitivities_, i.e. 
+derivatives of the solution w.r.t. parameters, are needed. This is done
+in Stan by numerically solving an extended ODE system consisting of the
+sensitivities and the original dynamical variables. 
+
+The solution provided by a numerical method
+is always an approximation to the true solution. 
+This means that the computed posterior probability density and its
+gradient are also approximations and the whole MCMC inference is biased
+to some degree. So we are performing Bayesian inference for the parameters, the error in the solutions propagates also to the statistical properties of the posterior draws, in ways that cannot be predicted beforehand.
+
+How could this error be studied? If the model parameters are fixed,
+we can verify that the solution at all points is
+appropriately close to a more accurate reference solution. 
+There is a vast amount of classical literature that studies this error, and the ODE solvers built into
+Stan are these classical methods that obtain estimate their error and adapt
+their step size so that a given tolerance is achieved. However, we are doing statistics, and so we need to
+know that the solution is accurate enough across all relevant parts of
+parameter space. Additionally, it is not known beforehand where the 
+"relevant parts of parameter space" are!
+
+The problem of validating the use of a numerical method for a Bayesian model
+is therefore significantly more complicated than in the classical numerical
+analysis world. One idea is to run sampling repeatedly, gradually increasing
+the solver accuracy, until the posterior inference
+results don't change anymore. But this might not
+be computationally very attractive. The numerical methods are often expensive
+and frequently become the limiting factors in whatever model they are involved in. Moreover, achieving more accuracy often comes with the cost of more
+computation time. Note however that there is no direct tradeoff.
+
+These two problems (computational cost and potential unreliability) occur also
+with any other type of model that requires numerically solving an implicitly defined function or variable, but in this case study we focus on ODEs.
+
+The point of this case study is to show how by adding one
+additional tool, namely Pareto-Smoothed Importance Sampling (PSIS) [@yao2018;
+@vehtari2019], we can solve this problem.
+
+
+## Simpler numerical methods
+Simplest numerical methods for integrating ODEs usually involve some
+discretization in time, which affects the solver accuracy. Denser 
+discretization means more accuracy but also more computation, as more time
+steps need to be taken.
+
+The simplest things we might do to speed up our calculations are lowering
+the timestep, coarsening the discretization, or increasing the tolerance of the
+solvers. That immediately leaves us with the question, is this okay? Has
+changing the numerical method affected our parameter inference results? Was our
+original method giving correct inference results to begin with? Are the default
+tolerances in Stan suitable for the problem at hand?
+
+# Workflow
+
+Let $M$ be the model for which we would like to perform inference, but which we
+cannot evaluate since the likelihood is defined implicitly through an
+ODE or PDE system that is not analytically tractable. MCMC inference for $M$
+can be seen actually as inference for another model $M_{high}$, which
+is the same model as $M$ but using a numerical solver, and can therefore be
+evaluated.
+
+Our workflow addresses the problem of defining the high-precision numerical
+method in $M_{high}$ so that $M_{high}$ can trusted to have essentially the
+same posterior as $M$. We define a way to perform inference for $M_{high}$ 
+without needing to compute gradients or HMC trajectories for it. This involves
+another model $M_{low}$, which is again the same model, except that $M_{low}$
+uses a cheaper and less accurate numerical methods (or just looser tolerances
+and/or coarser discretization) to compute the required ODE or PDE solutions,
+and is therefore faster to fit. The posterior densities are denoted $p_{low}$
+and $p_{high}$, respectively.
+
+To understand how PSIS comes into play, we must first discuss importance
+sampling. If we want to compute expectations with the high precision model, we
+can take draws from the low precision models and reweight these according to the
+importance weights $\frac{p_{high}}{p_{low}}$. If these models are too
+different, then the reweighting will produce noisy estimates that are not
+useful. PSIS and particularly the Pareto $k$-diagnostic (denoted $\hat{k}$), is
+the tool that tells us when we can or cannot rely on the importance weights. If
+$\hat{k} < 0.5$ we are safe to do the importance sampling, if $\hat{k} < 0.7$
+the importance sampling will start to converge more slowly, and if
+$\hat{k} > 0.7$ the importance sampling estimates are unreliable. For simplicity
+we will only consider the $\hat{k} < 0.5$ threshold.
+
+Ideally, $M_{high}$ would involve a numerical method that we can trust
+completely in all parts of the parameter space so that, as long as
+$\hat{k} < 0.5$, importance weights can be used to reweight the low precision
+approximation $p_{low}$ to the high precision approximation $p_{high}$. We can
+think of $M_{high}$ as a reference model, because it is the baseline to which
+we compare. It is difficult in practice to know if a given model is a good
+reference model in all parts of parameter space, due to curse of dimensionality
+and the fact that analysed system can have different properties in different
+parts of the parameter space. For example, ODEs can qualitatively change their
+behaviour as a function of parameters (bifurcation), or become stiff or
+chaotic in some parameter regions. Accuracy can be checked at a given set of
+parameters fairly easily, but not over a high dimensional parameter space.
+Under these conditions it is necessary to compromise to develop a reference
+model that works only over a range of parameter space, but even then it is hard
+to know *a priori* what range that is.
+
+We propose the following workflow:
+
+::: {#workflow .box}
+1. Generate draws from $p_{low}$.
+2. Tune the numerical method in $M_{high}$ so that it is reliable at
+these draws. All application specific knowledge and classical numerical
+analysis can be used here.
+3. Compute importance weights $\frac{p_{high}}{p_{low}}$
+4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
+the numerical method in $M_{low}$ and go back to step 1.
+5. Resample draws of $M_{low}$, using importance weights to get draws from
+$M_{high}$, and therefore essentially draws from $M$.
+:::
+
+The next two sections of this case study outline how to apply this workflow to
+do fast but reliable inference for
+
+1. an ODE model using a built-in Stan solver
+2. a PDE model using a custom solver that does not have explicit tolerance
+controls
+
+The importance sampling diagnostics are handled with the
+[`loo`](https://mc-stan.org/loo) package and the resampling is handled with the
+[`posterior`](https://github.com/stan-dev/posterior) package.
+
+
+## Example: SIR fitting
+The parameters $\beta$ and $\gamma$
+will be estimated from time series observations of the number of infected
+people (I). For the purposes of this case study, the goal is to use a very low
+precision ODE solver to do inference and then check it afterwards against
+a high precision solver. This is useful in practice if sampling with the
+high precision solver itself would take an inordinate amount of time.
+
+
+## References
