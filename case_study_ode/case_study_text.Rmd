@@ -32,6 +32,7 @@ color_scheme_set("brightblue")
 rng_seed_r <- 999 # rng seed for MCMC
 rng_seed_stan <- 123 # rng seed for data simulation
 set.seed(rng_seed_r)
+SIG_FIGS <- 10
 ```
 
 # Introduction
@@ -77,13 +78,65 @@ cat(readLines("stan/functions-SIR.stan"), sep="\n")
 
 We
 ```{r sir_model, message=FALSE, results=FALSE}
-mod <- cmdstan_model("stan/sir_simulate.stan", include_paths = "stan")
+mod <- cmdstan_model("stan/sir.stan", include_paths = "stan")
+mod_sim <- cmdstan_model("stan/sir_simulate.stan", include_paths = "stan")
 ```
 
 We print the model code here.
 ```{r sir_print}
+mod$print()
 ```
 
+```{r sir_fit}
+# Data
+t <- seq(1, 50)
+N <- length(t)
+y <- rep(1, N)
+
+# ODE solver controls
+RTOL <- 1e-6
+ATOL <- 1e-6
+MAX_NUM_STEPS <- 1e6
+
+# Stan data
+stan_data <- list(
+  t = t,
+  N = N,
+  y = y,
+  pop_size = 1000,
+  I0 = 10,
+  RTOL = RTOL,
+  ATOL = ATOL,
+  MAX_NUM_STEPS = MAX_NUM_STEPS
+)
+
+# Sample model
+fit <- mod$sample(
+  data = stan_data, sig_figs = SIG_FIGS, seed = rng_seed_stan,
+  refresh = 1000
+)
+
+# Get draws of ODE parameters
+theta_draws <- fit$draws(c("beta", "gamma"))
+mcmc_areas(theta_draws)
+
+# Simulate ODE solutions
+sim <- mod_sim$generate_quantities(
+  data = stan_data, 
+  fitted_params = theta_draws
+)
+
+x_draws <- sim$draws("x")
+
+i_chain <- 1
+i_draw <- 1
+S <- as.vector(x_draws[i_draw, i_chain, 1:50])
+I <- as.vector(x_draws[i_draw, i_chain, 51:100])
+R <- as.vector(x_draws[i_draw, i_chain, 100:150])
+
+plot(t, y)
+lines(t, I, col="firebrick")
+```
 
 ```{r sir_simulate}
 sir_simulate <- function(model, t_sim, beta, gamma, RTOL = 1e-6, ATOL = 1e-6,
