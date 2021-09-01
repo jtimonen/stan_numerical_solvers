@@ -201,13 +201,16 @@ reached.
 We repeat the prior ODE solving with different values of `RTOL = ATOL` and 
 check how it affects the solver accuracy and runtime.
 
-```{r sir_test_prior_tols, results=FALSE}
+```{r sir_test_prior_tols_time, results=FALSE}
 TOL <- 10^seq(-14,-3)
 J <- length(TOL)
 TIME <- rep(0, J)
+I_SIM <- array(0, dim=c(J,4000,N))
 for(j in 1:J) {
   sim <- simulate_sir(prior_draws, ATOL=TOL[j], RTOL=TOL[j])
   TIME[j] <- sim$time()$total
+  I_sim  <- merge_chains(sim$draws("x"))[,1,(N+1):(2*N), drop=TRUE]
+  I_SIM[j,,] <- I_sim
 }
 plot(log10(TOL), TIME, "o", pch=16)
 grid()
@@ -215,6 +218,32 @@ grid()
 
 We see that reducing the tolerance improves runtime, until some point after
 which it doesn't have much effect anymore.
+
+```{r sir_test_prior_tols_max_error, results=FALSE}
+# Compute max absolute difference to most accurate solution
+I_sim_best <- I_SIM[1,,]
+MAE <- rep(0, J)
+for(j in 2:J) {
+  I_sim <- I_SIM[j,,]
+  MAE[j] <- max(abs(as.vector(I_sim_best)-as.vector(I_sim)))
+}
+plot(log10(TOL)[2:J], log10(MAE)[2:J], "o", pch=16, xlab="log10(TOL)",
+     ylab="log10(max error)")
+grid()
+```
+
+```{r sir_test_prior_tols_mean_error, results=FALSE}
+# Compute mean absolute difference to most accurate solution
+I_sim_best <- I_SIM[1,,]
+MAE <- rep(0, J)
+for(j in 2:J) {
+  I_sim <- I_SIM[j,,]
+  MAE[j] <- mean(abs(as.vector(I_sim_best)-as.vector(I_sim)))
+}
+plot(log10(TOL)[2:J], log10(MAE)[2:J], "o", pch=16, xlab="log10(TOL)",
+     ylab="log10(mean error)")
+grid()
+```
 
 
 ##
