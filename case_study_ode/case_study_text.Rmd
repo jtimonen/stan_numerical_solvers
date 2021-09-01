@@ -93,19 +93,19 @@ print_lines("sir/prior.stan")
 ```
 
 Prior
-```{r sir_prior_model, message=FALSE, results=FALSE}
+```{r sir_prior_model}
 mod_prior <- cmdstan_model("sir/sir_prior.stan", include_paths = "sir")
 mod_prior$print()
 ```
 
-Generative model
-```{r sir_gen_model, message=FALSE, results=FALSE}
-mod_gen <- cmdstan_model("sir/sir_generative.stan", include_paths = "sir")
-mod_gen$print()
+Simulator model
+```{r sir_gen_model}
+mod_sim <- cmdstan_model("sir/sir_simulate.stan", include_paths = "sir")
+mod_sim$print()
 ```
 
 Posterior
-```{r sir_post_model, message=FALSE, results=FALSE}
+```{r sir_post_model}
 mod_post <- cmdstan_model("sir/sir_posterior.stan", include_paths = "sir")
 mod_post$print()
 ```
@@ -135,7 +135,7 @@ prior_fit <- mod_prior$sample(
   refresh = 1000
 )
 print(prior_fit)
-prior_draws <- prior_fit$draws(c("beta", "gamma"))
+prior_draws <- prior_fit$draws(c("beta", "gamma", "phi_inv"))
 mcmc_areas(prior_draws)
 ```
 
@@ -145,8 +145,8 @@ mcmc_areas(prior_draws)
 
 Prior check
 ```{r prior_check}
-# Function for simulating ODE solutions given parameter( draws)s
-simulate_sir <- function(theta, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
+# Function for simulating ODE solutions and data given parameter( draws)s
+simulate_sir <- function(params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
                          MAX_NUM_STEPS = 1e6) {
   if(is.null(t_sim)) t_sim <- data_list$t
   stan_data <- list(
@@ -155,21 +155,19 @@ simulate_sir <- function(theta, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
     RTOL = RTOL,
     ATOL = RTOL,
     MAX_NUM_STEPS = MAX_NUM_STEPS,
-    prior_only = 0,
     pop_size = data_list$pop_size,
     I0 = data_list$I0
   )
   sim <- mod_sim$generate_quantities(
     data = stan_data, 
-    fitted_params = prior_draws
+    fitted_params = params
   )
-  return(sim$draws("x"))
 }
 
-#x_prior_sim <- simulate_sir(prior_draws)
-```
+prior_sim <- simulate_sir(prior_draws)
+x_prior_sim <- prior_sim$draws("x")
 
-```
+# Plot
 plot(data_list$t, rep(data_list$pop_size, data_list$N), type="l", lty=2,
      col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day")
 for(i_chain in 1:4){
