@@ -27,12 +27,14 @@ library(bayesplot)
 library(ggplot2)
 library(loo)
 library(stats)
+library(outbreaks)
 color_scheme_set("brightblue")
 
 rng_seed_r <- 999 # rng seed for MCMC
 rng_seed_stan <- 123 # rng seed for data simulation
 set.seed(rng_seed_r)
 SIG_FIGS <- 10
+print_lines <- function(file) {cat(readLines(file), sep="\n")}
 ```
 
 # Introduction
@@ -70,97 +72,116 @@ transmission modeling in Stan in general. The states of the ODE are amounts of s
 \frac{dR}{dt} &=  \gamma \cdot I,
 \end{align}
 where $N_{pop}$ is the population size. Using the above notation, we have
-$\textbf{x}(t) = [S(t), I(t), R(t)]^{\top}$ and $\theta = \{\beta, \gamma\}$. This system can be coded as the following Stan function.
+$\textbf{x}(t) = [S(t), I(t), R(t)]^{\top}$ and $\theta = \{\beta, \gamma\}$. 
 
-```{r sir_function}
-cat(readLines("stan/functions-SIR.stan"), sep="\n")
+### Stan code
+
+This system can be coded as the following Stan function.
+
+```{r sir_stan_function}
+print_lines("sir/functions.stan")
 ```
 
-We
-```{r sir_model, message=FALSE, results=FALSE}
-mod <- cmdstan_model("stan/sir.stan", include_paths = "stan")
-mod_sim <- cmdstan_model("stan/sir_simulate.stan", include_paths = "stan")
+Other model parts that we will use are
+
+```{r sir_stan_blocks}
+print_lines("sir/data.stan")
+print_lines("sir/tdata.stan")
+print_lines("sir/params.stan")
+print_lines("sir/tparams.stan")
+print_lines("sir/prior.stan")
 ```
 
-We print the model code here.
-```{r sir_print}
-mod$print()
+Prior
+```{r sir_prior_model, message=FALSE, results=FALSE}
+mod_prior <- cmdstan_model("sir/sir_prior.stan", include_paths = "sir")
+mod_prior$print()
 ```
 
-```{r sir_fit}
-# Data
-t <- seq(1, 50)
-N <- length(t)
-y <- rep(1, N)
+Generative model
+```{r sir_gen_model, message=FALSE, results=FALSE}
+mod_gen <- cmdstan_model("sir/sir_generative.stan", include_paths = "sir")
+mod_gen$print()
+```
 
-# ODE solver controls
-RTOL <- 1e-6
-ATOL <- 1e-6
-MAX_NUM_STEPS <- 1e6
+Posterior
+```{r sir_post_model, message=FALSE, results=FALSE}
+mod_post <- cmdstan_model("sir/sir_posterior.stan", include_paths = "sir")
+mod_post$print()
+```
 
-# Stan data
-stan_data <- list(
-  t = t,
-  N = N,
+### Data
+
+```{r sir_data}
+y <- influenza_england_1978_school$in_bed
+N <- length(y)
+data_list <- list(
   y = y,
-  pop_size = 1000,
-  I0 = 10,
-  RTOL = RTOL,
-  ATOL = ATOL,
-  MAX_NUM_STEPS = MAX_NUM_STEPS
+  N = N,
+  t = seq(1, N),
+  I0 = 1,
+  pop_size = 763
 )
+print(data_list)
+```
 
-# Sample model
-fit <- mod$sample(
-  data = stan_data, sig_figs = SIG_FIGS, seed = rng_seed_stan,
+
+### Prior sampling
+```{r sample_prior}
+# Sample the prior and extract draws
+prior_fit <- mod_prior$sample(
+  sig_figs = SIG_FIGS, 
+  seed = rng_seed_stan,
   refresh = 1000
 )
-
-# Get draws of ODE parameters
-theta_draws <- fit$draws(c("beta", "gamma"))
-mcmc_areas(theta_draws)
-
-# Simulate ODE solutions
-sim <- mod_sim$generate_quantities(
-  data = stan_data, 
-  fitted_params = theta_draws
-)
-
-x_draws <- sim$draws("x")
-
-i_chain <- 1
-i_draw <- 1
-S <- as.vector(x_draws[i_draw, i_chain, 1:50])
-I <- as.vector(x_draws[i_draw, i_chain, 51:100])
-R <- as.vector(x_draws[i_draw, i_chain, 100:150])
-
-plot(t, y)
-lines(t, I, col="firebrick")
+print(prior_fit)
+prior_draws <- prior_fit$draws(c("beta", "gamma"))
+mcmc_areas(prior_draws)
 ```
 
-```{r sir_simulate}
-sir_simulate <- function(model, t_sim, beta, gamma, RTOL = 1e-6, ATOL = 1e-6,
+
+### Prior checking
+
+
+Prior check
+```{r prior_check}
+# Function for simulating ODE solutions given parameter( draws)s
+simulate_sir <- function(theta, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
                          MAX_NUM_STEPS = 1e6) {
-  P <- length(t_sim)
+  if(is.null(t_sim)) t_sim <- data_list$t
   stan_data <- list(
     t = t_sim,
-    t_sim = t_sim,
-    N = P,
-    P = P,
-    y = rep(0, P),
-    pop_size = 1000,
-    I0 = 10,
+    N = length(t_sim),
     RTOL = RTOL,
-    ATOL = ATOL,
-    MAX_NUM_STEPS = MAX_NUM_STEPS
+    ATOL = RTOL,
+    MAX_NUM_STEPS = MAX_NUM_STEPS,
+    prior_only = 0,
+    pop_size = data_list$pop_size,
+    I0 = data_list$I0
   )
-  mod$generate_quantities(
-    data = stan_data,
-    fitted_params = draws_array(beta=beta, gamma=gamma)
+  sim <- mod_sim$generate_quantities(
+    data = stan_data, 
+    fitted_params = prior_draws
   )
+  return(sim$draws("x"))
 }
+
+#x_prior_sim <- simulate_sir(prior_draws)
 ```
 
+```
+plot(data_list$t, rep(data_list$pop_size, data_list$N), type="l", lty=2,
+     col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day")
+for(i_chain in 1:4){
+  for(i_draw in 1:100) {
+    S <- as.vector(x_prior_sim[i_draw, i_chain, 1:N])
+    I <- as.vector(x_prior_sim[i_draw, i_chain, (N+1):(2*N)])
+    R <- as.vector(x_prior_sim[i_draw, i_chain, (2*N+1):(3*N)])
+    lines(data_list$t, I, col="firebrick")
+  }
+}
+points(data_list$t, y, ylim = c(0, 1000), pch=20)
+```
 
 
 ## Computational challenges
