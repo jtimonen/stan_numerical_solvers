@@ -24,11 +24,11 @@ knitr::opts_chunk$set(echo = TRUE)
 library(cmdstanr)
 library(posterior)
 library(bayesplot)
+library(scales)
 library(ggplot2)
 library(loo)
 library(stats)
 library(outbreaks)
-color_scheme_set("brightblue")
 
 rng_seed_r <- 999 # rng seed for MCMC
 rng_seed_stan <- 123 # rng seed for data simulation
@@ -44,74 +44,29 @@ print_lines <- function(file) {cat(readLines(file), sep="\n")}
 Ordinary differential equations (ODEs) 
 
 \begin{equation}
-\frac{\text{d} \textbf{x}(t)}{\text{d} t} = f_{\theta}(\textbf{x}(t), t)
+\frac{\text{d} \textbf{x}(t)}{\text{d} t} = f_{\nu}(\textbf{x}(t), t)
 \end{equation}
 
-are a model for the rate of change in some quantities $\textbf{x}(t)$, and are used in many fields of science. It is common that we have time-course data $\{(t_n, \textbf{y}_n)\}_{n=1}^N$, observed at time points $t_n \neq t_0$, and 
+are a model for the rate of change in some quantities $\textbf{x}(t)$.
+Many fields of science utilize ODEs and have laws that define the function $f_{\nu}$ for a specific problem, but it is common that its parameters $\nu$
+are unknown and need to be inferred. It is common that we have time-course data
+$\{(t_n, \textbf{y}_n)\}_{n=1}^N$, observed at time points $t_n \neq t_0$, and
 we need to calculate $\textbf{x}(t_n)$ for each $n=1, \ldots, N$, in order to
-compute likelihood of the data. Given initial value  $\textbf{x}(t_0) = \textbf{x}_0$, and assuming some smoothness requirements for $f_{\theta}$, there exists a unique solution for $\textbf{x}(t)$, $t \in \mathbb{R}$. This solution is given by the integral formula
-
+compute likelihood of the data. Given initial value  
+$\textbf{x}(t_0) = \textbf{x}_0$, and assuming some smoothness requirements for
+$f_{\nu}$, there exists a unique solution for $\textbf{x}(t)$, 
+$t \in \mathbb{R}$. This solution is given by the integral formula
 \begin{equation}
-\textbf{x}(t) = \textbf{x}_0 + \int_{t_0}^t f_{\theta}(\textbf{x}(\tau), \tau) 
+\textbf{x}(t) = \textbf{x}_0 + \int_{t_0}^t f_{\nu}(\textbf{x}(\tau), \tau) 
 \text{d} \tau,
 \end{equation}
 
 but the integral usually doesn't have a closed form, and numerical methods are required.
 
-## Example: SIR
+## SIR example
 
-Here we study a classic Susceptible-Infected-Recovered (SIR) model of disease
-spread. The code is adapted from that in the Stan Case Study [@grinsztajn2020], 
-which provides an introduction to disease
-transmission modeling in Stan in general. The states of the ODE are amounts of susceptible (S), infected (I) and recovered
-(R) people. The dynamics are given by the ODE system:
-
-\begin{align}
-\frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N_{pop}} \\
-\frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N_{pop}} - \gamma \cdot I \\
-\frac{dR}{dt} &=  \gamma \cdot I,
-\end{align}
-where $N_{pop}$ is the population size. Using the above notation, we have
-$\textbf{x}(t) = [S(t), I(t), R(t)]^{\top}$ and $\theta = \{\beta, \gamma\}$. 
-
-### Stan code
-
-This system can be coded as the following Stan function.
-
-```{r sir_stan_function}
-print_lines("sir/functions.stan")
-```
-
-Other model parts that we will use are
-
-```{r sir_stan_blocks}
-print_lines("sir/data.stan")
-print_lines("sir/tdata.stan")
-print_lines("sir/params.stan")
-print_lines("sir/tparams.stan")
-print_lines("sir/prior.stan")
-```
-
-Prior
-```{r sir_prior_model}
-mod_prior <- cmdstan_model("sir/sir_prior.stan", include_paths = "sir")
-mod_prior$print()
-```
-
-Simulator model
-```{r sir_gen_model}
-mod_sim <- cmdstan_model("sir/sir_simulate.stan", include_paths = "sir")
-mod_sim$print()
-```
-
-Posterior
-```{r sir_post_model}
-mod_post <- cmdstan_model("sir/sir_posterior.stan", include_paths = "sir")
-mod_post$print()
-```
-
-### Data
-
+We use data from the **outbreaks** package. In the variable `y`, we store the
+number of infected people on 14 consecutive days.
 ```{r sir_data}
 y <- influenza_england_1978_school$in_bed
 N <- length(y)
@@ -125,10 +80,47 @@ data_list <- list(
 print(data_list)
 ```
 
+We create a classic Susceptible-Infected-Recovered (SIR) model of disease
+spread. The code is adapted from that in the Stan Case Study [@grinsztajn2020], 
+which provides an introduction to disease
+transmission modeling in Stan in general. The states of the ODE are expected
+amounts of susceptible (S), infected (I) and recovered
+(R) people. The dynamics are given by the ODE system:
 
-### Prior sampling
+\begin{align}
+\frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N_{pop}} \\
+\frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N_{pop}} - \gamma \cdot I \\
+\frac{dR}{dt} &=  \gamma \cdot I,
+\end{align}
+where $N_{pop}$ is the population size. Using the above notation, we have
+$\textbf{x}(t) = [S(t), I(t), R(t)]^{\top}$ and $\nu = \{\beta, \gamma\}$. 
+
+The actual number of infected people, which we denote by $y(t)$
+is then assumed to follow a negative binomial distribution with mean
+$I(t)$ and inverse overdispersion $\phi$. All model parameters are collected
+in a vector $\theta = \{\beta, \gamma, \phi\}$.
+
+## Solving the ODE system
+We wish to demonstrate solving the ODE system, but because we don't know the
+values of the parameters
+```{r sir_stan_params, message=FALSE}
+print_lines("sir/params.stan")
+print_lines("sir/tparams.stan")
+```
+we first draw them from a prior distribution.
+```{r sir_stan_prior, message=FALSE}
+print_lines("sir/prior.stan")
+```
+
+The following is a complete Stan model that samples from the prior.
+```{r sir_stan_prior_model, message=FALSE}
+mod_prior <- cmdstan_model("sir/sir_prior.stan", include_paths = "sir")
+mod_prior$print()
+```
+
+We sample the model and plot the distribution of obtained draws.
+
 ```{r sample_prior}
-# Sample the prior and extract draws
 prior_fit <- mod_prior$sample(
   sig_figs = SIG_FIGS, 
   seed = rng_seed_stan,
@@ -136,15 +128,27 @@ prior_fit <- mod_prior$sample(
 )
 print(prior_fit)
 prior_draws <- prior_fit$draws(c("beta", "gamma", "phi_inv"))
-mcmc_areas(prior_draws)
 ```
 
+The ODE system can be coded as the following Stan function.
+```{r sir_stan_function}
+print_lines("sir/functions.stan")
+```
 
-### Prior checking
+We need the following input
+```{r sir_stan_data_blocks}
+print_lines("sir/data.stan")
+print_lines("sir/tdata.stan")
+```
 
+to a Stan model that can be called in the `generate_quantities` mode to 
+solve the system using the prior parameter draws.
 
-Prior check
-```{r prior_check}
+```{r sir_sim_model, message=FALSE}
+# Compile a full simulator model
+mod_sim <- cmdstan_model("sir/sir_simulate.stan", include_paths = "sir")
+mod_sim$print()
+
 # Function for simulating ODE solutions and data given parameter( draws)s
 simulate_sir <- function(params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
                          MAX_NUM_STEPS = 1e6) {
@@ -163,26 +167,66 @@ simulate_sir <- function(params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
     fitted_params = params
   )
 }
+```
 
+We won't yet go into detail about the meaning of the 
+`RTOL`, `ATOL` and `MAX_NUM_STEPS` control arguments but just give them
+some values and plot the obtained ODE solutions.
+
+```{r sir_prior_sim, message=FALSE}
+# Call the above function and extract generated solutions
 prior_sim <- simulate_sir(prior_draws)
-x_prior_sim <- prior_sim$draws("x")
+x_prior_sim <- thin_draws(merge_chains(prior_sim$draws("x")), 10)
+I_prior_sim <- x_prior_sim[,1,(N+1):(2*N), drop=TRUE]
 
-# Plot
+# Plot agaist data
 plot(data_list$t, rep(data_list$pop_size, data_list$N), type="l", lty=2,
-     col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day")
-for(i_chain in 1:4){
-  for(i_draw in 1:100) {
-    S <- as.vector(x_prior_sim[i_draw, i_chain, 1:N])
-    I <- as.vector(x_prior_sim[i_draw, i_chain, (N+1):(2*N)])
-    R <- as.vector(x_prior_sim[i_draw, i_chain, (2*N+1):(3*N)])
-    lines(data_list$t, I, col="firebrick")
-  }
+     col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day",
+     main = "Solutions using prior param draws")
+for(i_draw in 1:nrow(I_prior_sim)) {
+    I <- as.vector(I_prior_sim[i_draw, ])
+    lines(data_list$t, I, col=alpha("firebrick", 0.1))
 }
 points(data_list$t, y, ylim = c(0, 1000), pch=20)
 ```
 
+## Analyzing the numerical method
+The solution provided by a numerical method is always an approximation to the
+true solution. For the ODE solvers in Stan, the control arguments `RTOL` 
+and `ATOL` have an effect on the accuracy of this solution. In addition,
+`MAX_NUM_STEPS` affects whether a solution can be obtained at all. Here
+we use `MAX_NUM_STEPS=1e6` and should not have problems with it being
+reached.
 
-## Computational challenges
+We repeat the prior ODE solving with different values of `RTOL = ATOL` and 
+check how it affects the solver accuracy and runtime.
+
+```{r sir_test_prior_tols, results=FALSE}
+TOL <- 10^seq(-14,-3)
+J <- length(TOL)
+TIME <- rep(0, J)
+for(j in 1:J) {
+  sim <- simulate_sir(prior_draws, ATOL=TOL[j], RTOL=TOL[j])
+  TIME[j] <- sim$time()$total
+}
+plot(log10(TOL), TIME, "o", pch=16)
+grid()
+```
+
+We see that reducing the tolerance improves runtime, until some point after
+which it doesn't have much effect anymore.
+
+
+##
+Posterior
+```{r sir_post_model, message=FALSE}
+mod_post <- cmdstan_model("sir/sir_posterior.stan", include_paths = "sir")
+mod_post$print()
+```
+
+
+
+# Computational challenges
 
 When performing Bayesian inference for the parameters $\theta$
 (and possible other model parameters, note that also $\textbf{y}_0$ can be a
