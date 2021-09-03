@@ -67,3 +67,42 @@ create_cmdstan_models <- function(funs, data, tdata, obsdata, pars,
     )
   )
 }
+
+# Function for simulating ODE solutions and data given parameter( draws)s
+simulate <- function(model, params, data, solver_args = list()) {
+  stopifnot(is(model, "CmdStanModel"))
+  stopifnot(is(params, "draws"))
+  stopifnot(is(data, "list"))
+  stopifnot(is(solver_args, "list"))
+  if(is.null(solver_args$RTOL)) solver_args$RTOL <- 1e-6
+  if(is.null(solver_args$ATOL)) solver_args$ATOL <- 1e-6
+  if(is.null(solver_args$MAX_NUM_STEPS)) solver_args$MAX_NUM_STEPS <- 1e6
+  model$generate_quantities(
+    data = c(data, solver_args), 
+    fitted_params = params
+  )
+}
+
+# Using simulate with different tolerances
+simulate_many <- function(model, params, data, 
+                          atols, rtols, MAX_NUM_STEPS=NULL) {
+  stopifnot(is(params, "draws"))
+  J1 <- length(atols)
+  J2 <- length(rtols)
+  S <- niterations(params) * nchains(params)
+  TIME <- array(0, dim=c(J1, J2))
+  XSIM <- array(0, dim=c(J1, J2, S, data$N*data$D))
+  for(j1 in 1:J1) {
+    for(j2 in 1:J2) {
+      solver_args <- list(
+        ATOL = atols[j1], 
+        RTOL=rtols[j2],
+        MAX_NUM_STEPS = MAX_NUM_STEPS
+      )
+      sim <- simulate(model, params, data, solver_args)
+      XSIM[j1, j2,,]  <- merge_chains(sim$draws("x"))[,1,, drop=TRUE]
+      TIME[j1, j2] <- sim$time()$total
+    }
+  }
+  return(list(times=TIME,sims=XSIM))
+}
