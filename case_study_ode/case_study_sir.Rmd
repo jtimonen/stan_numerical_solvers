@@ -152,10 +152,12 @@ sir_likelihood <- "
 "
 sir_gq <- "
   int y[D, N];
+  real log_lik = 0.0;
   for(n in 1:N) {
     for(d in 1:D) {
       y[d,n] = neg_binomial_2_rng(x[n][d] + 10*ATOL, phi); 
     }
+    log_lik += neg_binomial_2_lpmf(I_data[n] | x[n][2] + 10*ATOL, phi);
   }
 "
 data_list$D <- 3
@@ -229,7 +231,7 @@ reached.
 We repeat the prior ODE solving with different values of `RTOL` and `ATOL`.
 
 ```{r sir_test_prior_tols_time, results = FALSE}
-TOLS <- 10^seq(-13,-3) # 10^seq(-14,-3)
+TOLS <- 10^seq(-10,-4) # 10^seq(-14,-3)
 atols <- TOLS
 rtols <- TOLS
 sims <- simulate_many(sir_models$sim, prior_draws, data_list, atols, rtols)
@@ -246,14 +248,20 @@ until some point after which it doesn't have much effect anymore. We also
 plot here the mean and maximum absolute error with respect to the solution
 given by the strictest tolerances.
 
-```{r sir_compute_errors, fig.width=8.2, fig.height=4.5}
-mean_abs_error <- compute_errors(sims$sims, "mean")
-max_abs_error <- compute_errors(sims$sims, "max")
-plot_sim_errors(atols, rtols, mean_abs_error)
-plot_sim_errors(atols, rtols, max_abs_error)
+```{r sir_sol_errors, fig.width=8.2, fig.height=4.5}
+mean_abs_sol_error <- compute_sol_errors(sims$sims, "mean")
+max_abs_sol_error <- compute_sol_errors(sims$sims, "max")
+plot_sim_errors(atols, rtols, mean_abs_sol_error)
+plot_sim_errors(atols, rtols, max_abs_sol_error)
 ```
 
-
+Finally we also plot the error in log likelihood
+```{r sir_loglik_errors, fig.width=8.2, fig.height=4.5}
+mean_abs_loglik_error <- compute_loglik_errors(sims$log_liks, "mean")
+max_abs_loglik_error <- compute_loglik_errors(sims$log_liks, "max")
+plot_sim_errors(atols, rtols, mean_abs_loglik_error)
+plot_sim_errors(atols, rtols, max_abs_loglik_error)
+```
 
 # Computational challenges
 
