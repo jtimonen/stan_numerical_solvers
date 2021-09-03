@@ -21,14 +21,15 @@ max_num_steps <- 1e6
 
 # Fit model
 N <- length(t_data)
-stan_data <- list(N = N, 
-                  t_data = t_data, 
-                  y_data = y_data,
-                  RTOL = rtol,
-                  ATOL = atol, 
-                  MAX_NUM_STEPS = max_num_steps, 
-                  pop_size = 1000,
-                  I0 = 15
+stan_data <- list(
+  N = N,
+  t_data = t_data,
+  y_data = y_data,
+  RTOL = rtol,
+  ATOL = atol,
+  MAX_NUM_STEPS = max_num_steps,
+  pop_size = 1000,
+  I0 = 15
 )
 fit <- model$sample(data = stan_data)
 t1 <- fit$time()$total
@@ -42,7 +43,8 @@ plot_lv(dat, out)
 diag <- fit$cmdstan_diagnose()
 
 # Comparison
-fit_ref <- sample_lv(model, dat, h, tol = tol,
+fit_ref <- sample_lv(model, dat, h,
+  tol = tol,
   solver = 1, refresh = 1000, chains = 10, init = 0
 )
 
@@ -51,10 +53,9 @@ runtime_info(fit)
 runtime_info(fit_ref)
 
 # Get log ratios, compute r_eff and pareto_k
-#log_ratios <- fit$draws(variables = "log_ratio")
-#r_eff <- as.numeric(relative_eff(log_ratios))
-#psis <- psis(log_ratios, r_eff = r_eff)
+# log_ratios <- fit$draws(variables = "log_ratio")
+# r_eff <- as.numeric(relative_eff(log_ratios))
+# psis <- psis(log_ratios, r_eff = r_eff)
 
-#msg3 <- paste0("Pareto_k = ", round(psis$diagnostics$pareto_k, 3), "\n")
-#cat(msg3)
-
+# msg3 <- paste0("Pareto_k = ", round(psis$diagnostics$pareto_k, 3), "\n")
+# cat(msg3)

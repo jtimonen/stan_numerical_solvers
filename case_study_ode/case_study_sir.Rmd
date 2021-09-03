@@ -33,7 +33,7 @@ library(outbreaks)
 rng_seed_r <- 999 # rng seed for MCMC
 rng_seed_stan <- 123 # rng seed for data simulation
 set.seed(rng_seed_r)
-SIG_FIGS <- 10
+SIG_FIGS <- 18
 print_lines <- function(file) {cat(readLines(file), sep="\n")}
 ```
 
@@ -100,28 +100,87 @@ is then assumed to follow a negative binomial distribution with mean
 $I(t)$ and inverse overdispersion $\phi$. All model parameters are collected
 in a vector $\theta = \{\beta, \gamma, \phi\}$.
 
-## Solving the ODE system
-We wish to demonstrate solving the ODE system, but because we don't know the
-values of the parameters
-```{r sir_stan_params, message=FALSE}
-print_lines("sir/params.stan")
-print_lines("sir/tparams.stan")
-```
-we first draw them from a prior distribution.
-```{r sir_stan_prior, message=FALSE}
-print_lines("sir/prior.stan")
+## Stan code
+
+```{r sir_stan_code, message=FALSE}
+sir_pars <- "
+  real<lower=0> beta;
+  real<lower=0> gamma;
+  real<lower=0> phi_inv;
+"
+sir_tpars <- "  real phi = inv(phi_inv);"
+sir_prior <- "
+  beta ~ normal(2, 1);
+  gamma ~ normal(0.4, 0.5);
+  phi_inv ~ exponential(5);
+"
+sir_funs <- "
+  // SIR system right-hand side
+  vector SIR(real t, vector y, data int[] a0, vector theta) {
+    vector[3] dx_dt;
+    int pop_size = a0[1];
+    real S = y[1];
+    real I = y[2];
+    real R = y[3];
+    real beta = theta[1];
+    real gamma = theta[2];
+    real infection_rate = beta * I * S / pop_size;
+    real recovery_rate = gamma * I;
+    dx_dt[1] = - infection_rate;
+    dx_dt[2] = infection_rate - recovery_rate;
+    dx_dt[3] = recovery_rate;
+    return dx_dt;
+  }
+"
+sir_data <- "
+  int<lower=1> N; // number of time points
+  real t[N]; // time points
+  int<lower=1> pop_size; // population size
+  real<lower=1> I0; // initial number of infected
+  real<lower=0> RTOL; // ODE solver relative tolerance
+  real<lower=0> ATOL; // ODE solver absolute tolerance
+  int<lower=1> MAX_NUM_STEPS; // ODE solver maximum number of steps
+"
+sir_tdata <- "
+  real t0 = 0.0;
+  int a0[1] = {pop_size};
+  vector[3] x0 = to_vector({pop_size - I0, I0, 0.0}); // {S, I, R}
+"
+sir_obsdata <- "  int<lower=0> y[N];"
+sir_odesolve <- "  vector[3] x[N] = ode_rk45_tol(SIR, x0, t0, t, RTOL, ATOL, 
+    MAX_NUM_STEPS, a0, to_vector({beta, gamma}));"
+sir_likelihood <- "
+  for(n in 1:N) {
+    y[n] ~ neg_binomial_2(x[n] + 10*ATOL, phi);
+  }
+"
+sir_gq <- "
+  int y[3, N];
+  for(n in 1:N) {
+    for(j in 1:3) {
+      y[j,n] = neg_binomial_2_rng(x[n][j] + 10*ATOL, phi); 
+    }
+  }
+"
 ```
 
-The following is a complete Stan model that samples from the prior.
-```{r sir_stan_prior_model, message=FALSE}
-mod_prior <- cmdstan_model("sir/sir_prior.stan", include_paths = "sir")
-mod_prior$print()
+We create and compile three Stan models.
+```{r sir_compile, message=FALSE}
+source("R/odeadapt.R")
+models <- create_cmdstan_models(sir_funs, sir_data, sir_tdata, sir_obsdata,
+                                sir_pars, sir_tpars,
+                                sir_prior, sir_odesolve, 
+                                sir_likelihood, sir_gq)
 ```
+
+## Solving the ODE system
+We wish to demonstrate solving the ODE system, but because we don't know the
+values of the parameters, we first draw them from a prior distribution.
 
 We sample the model and plot the distribution of obtained draws.
 
 ```{r sample_prior}
-prior_fit <- mod_prior$sample(
+prior_fit <- models$prior$sample(
   sig_figs = SIG_FIGS, 
   seed = rng_seed_stan,
   refresh = 1000
@@ -130,24 +189,10 @@ print(prior_fit)
 prior_draws <- prior_fit$draws(c("beta", "gamma", "phi_inv"))
 ```
 
-The ODE system can be coded as the following Stan function.
-```{r sir_stan_function}
-print_lines("sir/functions.stan")
-```
-
-We need the following input
-```{r sir_stan_data_blocks}
-print_lines("sir/data.stan")
-print_lines("sir/tdata.stan")
-```
-
 to a Stan model that can be called in the `generate_quantities` mode to 
 solve the system using the prior parameter draws.
 
 ```{r sir_sim_model, message=FALSE}
-# Compile a full simulator model
-mod_sim <- cmdstan_model("sir/sir_simulate.stan", include_paths = "sir")
-mod_sim$print()
 
 # Function for simulating ODE solutions and data given parameter( draws)s
 simulate_sir <- function(params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
@@ -162,7 +207,7 @@ simulate_sir <- function(params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
     pop_size = data_list$pop_size,
     I0 = data_list$I0
   )
-  sim <- mod_sim$generate_quantities(
+  sim <- models$sim$generate_quantities(
     data = stan_data, 
     fitted_params = params
   )
@@ -244,15 +289,6 @@ plot(log10(TOL)[2:J], log10(MAE)[2:J], "o", pch=16, xlab="log10(TOL)",
      ylab="log10(mean error)")
 grid()
 ```
-
-
-##
-Posterior
-```{r sir_post_model, message=FALSE}
-mod_post <- cmdstan_model("sir/sir_posterior.stan", include_paths = "sir")
-mod_post$print()
-```
-
 
 
 # Computational challenges

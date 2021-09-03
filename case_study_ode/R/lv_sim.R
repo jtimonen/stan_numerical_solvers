@@ -8,7 +8,7 @@ model_sim <- cmdstan_model("../stan/lv_sim.stan", include_paths = "stan")
 N <- 30
 D <- 2
 theta <- c(1.2, 0.8)
-t_data <- seq(12/N, 12, length.out = N) + 0.3 * rnorm(n = length(N))
+t_data <- seq(12 / N, 12, length.out = N) + 0.3 * rnorm(n = length(N))
 if (min(t_data) < 0) {
   t_data <- sort(t_data) - min(t_data) + 0.01
 }

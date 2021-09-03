@@ -1,13 +1,13 @@
 require(rstan)
-source('functions.R')
+source("functions.R")
 
 # Expose stan functions to R
-m <- rstan::stan_model(file = 'diffusion.stan')
+m <- rstan::stan_model(file = "diffusion.stan")
 rstan::expose_stan_functions(m)
 
 # Test data
-a <- c(1,1,1)
-b <- c(2,3,3,2)
+a <- c(1, 1, 1)
+b <- c(2, 3, 3, 2)
 d <- runif(4)
 
 # Check if the stan functions work similarly as the R counterpart

@@ -10,32 +10,34 @@ require(posterior)
 # -------------------------------------------------------------------------
 
 # Build model and expose functions
-model = stan_model("../stan/sir.stan")
+model <- stan_model("../stan/sir.stan")
 expose_stan_functions(model)
 
-N = 16                                # number of days measured
-M = 1000                              # population size
-I0 = 20                               # number of infected on day 0
-initial_conditions = c(M - I0, I0, 0) # S, I, R on day 0
-ts = seq_len(N)                       # measurement times
-theta_true = c(1, 0.2)                # true parameter values
+N <- 16 # number of days measured
+M <- 1000 # population size
+I0 <- 20 # number of infected on day 0
+initial_conditions <- c(M - I0, I0, 0) # S, I, R on day 0
+ts <- seq_len(N) # measurement times
+theta_true <- c(1, 0.2) # true parameter values
 
 # Solve the SIR system and format result array
 # - theta = [beta, gamma]
-solve_sir = function(theta, rtol, atol, max_num_steps) {
-  stan_solve_sir(initial_conditions, ts, theta,
-                 c(0.0), M, rtol, atol, max_num_steps) %>%
-    unlist %>%
+solve_sir <- function(theta, rtol, atol, max_num_steps) {
+  stan_solve_sir(
+    initial_conditions, ts, theta,
+    c(0.0), M, rtol, atol, max_num_steps
+  ) %>%
+    unlist() %>%
     matrix(ncol = 3, byrow = TRUE)
 }
 
 # Generate data
-atol =  1e-6
-rtol = 1e-6
+atol <- 1e-6
+rtol <- 1e-6
 
-dispersion = 5 # noise parameter for negative binomial
-mu = solve_sir(theta_true, atol, rtol, 1e8)[, 2]
-y = stats::rnbinom(length(ts), mu = mu, size = dispersion)
+dispersion <- 5 # noise parameter for negative binomial
+mu <- solve_sir(theta_true, atol, rtol, 1e8)[, 2]
+y <- stats::rnbinom(length(ts), mu = mu, size = dispersion)
 
 tibble(t = ts, mu = mu, y = y) %>%
   ggplot() +
@@ -59,8 +61,8 @@ for (i in seq_len(NTOL)) {
   for (j in seq_len(L)) {
     msg <- paste0("atol=rtol=", TOL[i], ", max_num_steps=", MNS[j], "\n")
     cat(msg)
-    
-    dat = list(
+
+    dat <- list(
       N = length(ts),
       M = M,
       ts = ts,
@@ -70,16 +72,16 @@ for (i in seq_len(NTOL)) {
       atol = TOL[i],
       max_num_steps = MNS[j]
     )
-    
-    fit = rstan::sampling(model, dat, chains = C, refresh = 0)
-    runtimes[i, j,] <- rowSums(get_elapsed_time(fit))
+
+    fit <- rstan::sampling(model, dat, chains = C, refresh = 0)
+    runtimes[i, j, ] <- rowSums(get_elapsed_time(fit))
   }
 }
 
 # Plotting runtimes for all chains
 DF <- NULL
 for (i in 1:NTOL) {
-  tim <- runtimes[i,,]
+  tim <- runtimes[i, , ]
   tim <- as.vector(t(tim))
   tol <- rep(TOL[i], length(tim))
   mns <- rep(MNS, each = C)
@@ -89,19 +91,28 @@ for (i in 1:NTOL) {
 DF$tol <- as.factor(DF$tol)
 colnames(DF) <- c("tol", "max_num_steps", "runtime")
 
-aes <- aes_string(x = "max_num_steps", y = "runtime",
-                  group = "tol", color = "tol", shape = "tol")
-plt1 <- ggplot(DF, aes) + geom_point() + scale_x_log10()
+aes <- aes_string(
+  x = "max_num_steps", y = "runtime",
+  group = "tol", color = "tol", shape = "tol"
+)
+plt1 <- ggplot(DF, aes) +
+  geom_point() +
+  scale_x_log10()
 
 # Plotting runtimes averged over chains
-rt <- apply(runtimes, c(1,2), mean)
+rt <- apply(runtimes, c(1, 2), mean)
 tim <- as.vector(t(rt))
 mns <- rep(MNS, NTOL)
 tol <- rep(TOL, each = L)
 df <- data.frame(as.factor(tol), mns, tim)
 colnames(df) <- c("tol", "max_num_steps", "runtime")
 
-aes <- aes_string(x = "max_num_steps", y = "runtime",
-                  group = "tol", color = "tol")
-plt2 <- ggplot(df, aes) + geom_point() + geom_line() + scale_x_log10() +
+aes <- aes_string(
+  x = "max_num_steps", y = "runtime",
+  group = "tol", color = "tol"
+)
+plt2 <- ggplot(df, aes) +
+  geom_point() +
+  geom_line() +
+  scale_x_log10() +
   ylab("average runtime over chains (s)")

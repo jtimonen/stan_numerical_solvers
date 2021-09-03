@@ -3,7 +3,7 @@ library(ggplot2)
 source("sir_functions.R")
 
 # Compile model
-fp <-  "../stan/sir_fixedparam.stan"
+fp <- "../stan/sir_fixedparam.stan"
 model_fp <- cmdstan_model(fp, include_paths = "../stan")
 
 # Setup
@@ -18,10 +18,11 @@ df <- solve_sir(model_fp, t_data, rtol, atol, max_num_steps, THETA)
 
 # Plot
 plt <- ggplot(df, aes(x = t, y = y_hat, group = draw, color = draw)) +
-  geom_line() + facet_grid(.~ var)
+  geom_line() +
+  facet_grid(. ~ var)
 
 # Get only infected
-dat <- df[df$var == "I",]
+dat <- df[df$var == "I", ]
 t_data <- dat$t
 x_data <- dat$y_hat
 
@@ -31,4 +32,4 @@ y_data <- rnbinom(n = length(t_data), size = phi, mu = x_data)
 
 # Save
 dat <- list(t_data = t_data, y_data = y_data)
-#saveRDS(file = "../data/data_sir.rds", dat)
+# saveRDS(file = "../data/data_sir.rds", dat)

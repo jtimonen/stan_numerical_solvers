@@ -26,9 +26,8 @@ t2 <- fit2$time()$total
 cat("\nN =", N, "\n")
 msg1 <- paste0("Time using looped likelihood: ", round(t1, 3), " s\n")
 msg2 <- paste0("Time using vectorized likelihood: ", round(t2, 3), " s\n")
-prc <- 100.0 * (t1 - t2)/t1
+prc <- 100.0 * (t1 - t2) / t1
 msg3 <- paste0("Improvement: ", round(prc, 3), "%")
 cat(msg1)
 cat(msg2)
 cat(msg3)
-

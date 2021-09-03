@@ -2,7 +2,7 @@ library(cmdstanr)
 library(posterior)
 library(loo)
 source("functions.R")
-#path <- "/Users/juhotimonen/Work/research/stan-dev/cmdstan-2.26.1/"
+# path <- "/Users/juhotimonen/Work/research/stan-dev/cmdstan-2.26.1/"
 path <- "/Users/juhotimonen/Work/research/stan-dev/cmdstan"
 set_cmdstan_path(path)
 
@@ -16,7 +16,8 @@ dat <- readRDS(file = "../data/data_lv.rds")
 # Fit model
 h <- 1.0
 tol <- 1e-6
-fit <- sample_lv(model, dat, h, tol = tol,
+fit <- sample_lv(model, dat, h,
+  tol = tol,
   solver = 0, chains = 10, init = 0
 )
 
@@ -28,7 +29,8 @@ plot_lv(dat, out)
 diag <- fit$cmdstan_diagnose()
 
 # Comparison
-fit_ref <- sample_lv(model, dat, h, tol = tol,
+fit_ref <- sample_lv(model, dat, h,
+  tol = tol,
   solver = 1, chains = 10, init = 0
 )
 
@@ -37,10 +39,9 @@ runtime_info(fit)
 runtime_info(fit_ref)
 
 # Get log ratios, compute r_eff and pareto_k
-#log_ratios <- fit$draws(variables = "log_ratio")
-#r_eff <- as.numeric(relative_eff(log_ratios))
-#psis <- psis(log_ratios, r_eff = r_eff)
+# log_ratios <- fit$draws(variables = "log_ratio")
+# r_eff <- as.numeric(relative_eff(log_ratios))
+# psis <- psis(log_ratios, r_eff = r_eff)
 
-#msg3 <- paste0("Pareto_k = ", round(psis$diagnostics$pareto_k, 3), "\n")
-#cat(msg3)
-
+# msg3 <- paste0("Pareto_k = ", round(psis$diagnostics$pareto_k, 3), "\n")
+# cat(msg3)

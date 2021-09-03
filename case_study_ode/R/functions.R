@@ -91,6 +91,6 @@ runtime_info <- function(fit) {
   times <- fit$time()$chains$total
   m <- round(mean(times), 4)
   s <- round(stats::sd(times), 4)
-  msg <- paste0("Time per chain = ", m, " (+/- ",  s, ") seconds.\n")
+  msg <- paste0("Time per chain = ", m, " (+/- ", s, ") seconds.\n")
   cat(msg)
 }
