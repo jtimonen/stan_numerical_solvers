@@ -21,7 +21,6 @@ create_prior_model <- function(pars, tpars, prior) {
   blocks <- c("parameters", "transformed parameters", "model")
   codes <- c(pars, tpars, prior)
   model_code <- stan_code(blocks, codes)
-  cat(model_code)
   tmp_file <- cmdstanr::write_stan_file(model_code)
   cmdstanr::cmdstan_model(tmp_file)
 }
@@ -33,16 +32,15 @@ create_simulator_model <- function(funs, data, tdata, pars, tpars, ode, gq) {
     "functions", "data", "transformed data",
     "parameters", "transformed parameters", "generated quantities"
   )
-  gq <- paste(ode, gq, sep="\n")
+  gq <- paste(ode, gq, sep = "\n")
   codes <- c(funs, data, tdata, pars, tpars, gq)
   model_code <- stan_code(blocks, codes)
-  cat(model_code)
   tmp_file <- cmdstanr::write_stan_file(model_code)
   cmdstanr::cmdstan_model(tmp_file)
 }
 
 # Create a CmdStanModel for posterior sampling
-create_posterior_model <- function(funs, data, tdata, obsdata, 
+create_posterior_model <- function(funs, data, tdata, obsdata,
                                    pars, tpars, prior, ode, lik) {
   cat("* Creating CmdStanModel for posterior sampling...\n")
   blocks <- c(
@@ -50,10 +48,9 @@ create_posterior_model <- function(funs, data, tdata, obsdata,
     "parameters", "transformed parameters", "model"
   )
   post <- paste(prior, ode, lik, sep = "\n")
-  data <- paste(data, obsdata, sep="\n")
+  data <- paste(data, obsdata, sep = "\n")
   codes <- c(funs, data, tdata, pars, tpars, post)
   model_code <- stan_code(blocks, codes)
-  cat(model_code)
   tmp_file <- cmdstanr::write_stan_file(model_code)
   cmdstanr::cmdstan_model(tmp_file)
 }
@@ -64,7 +61,9 @@ create_cmdstan_models <- function(funs, data, tdata, obsdata, pars,
   list(
     prior = create_prior_model(pars, tpars, prior),
     sim = create_simulator_model(funs, data, tdata, pars, tpars, ode, gq),
-    post = create_posterior_model(funs, data, tdata, obsdata, 
-                                  pars, tpars, prior, ode, lik)
+    post = create_posterior_model(
+      funs, data, tdata, obsdata,
+      pars, tpars, prior, ode, lik
+    )
   )
 }

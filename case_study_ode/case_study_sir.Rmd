@@ -167,20 +167,25 @@ sir_gq <- "
 We create and compile three Stan models.
 ```{r sir_compile, message=FALSE}
 source("R/odeadapt.R")
-models <- create_cmdstan_models(sir_funs, sir_data, sir_tdata, sir_obsdata,
-                                sir_pars, sir_tpars,
-                                sir_prior, sir_odesolve, 
-                                sir_likelihood, sir_gq)
+sir_models <- create_cmdstan_models(sir_funs, sir_data, sir_tdata, sir_obsdata,
+                                    sir_pars, sir_tpars,
+                                    sir_prior, sir_odesolve, 
+                                    sir_likelihood, sir_gq)
 ```
 
 ## Solving the ODE system
 We wish to demonstrate solving the ODE system, but because we don't know the
-values of the parameters, we first draw them from a prior distribution.
+values of the parameters, we first draw them from a prior distribution
+using the first Stan model.
 
-We sample the model and plot the distribution of obtained draws.
+```{r print_stan_model_prior}
+sir_models$prior
+```
+
+We sample the model and extract prior draws of the parameters.
 
 ```{r sample_prior}
-prior_fit <- models$prior$sample(
+prior_fit <- sir_models$prior$sample(
   sig_figs = SIG_FIGS, 
   seed = rng_seed_stan,
   refresh = 1000
@@ -189,38 +194,38 @@ print(prior_fit)
 prior_draws <- prior_fit$draws(c("beta", "gamma", "phi_inv"))
 ```
 
-to a Stan model that can be called in the `generate_quantities` mode to 
-solve the system using the prior parameter draws.
+These draws will be passed to the second Stan model
+```{r print_stan_model_sim}
+sir_models$sim
+```
+that can be called in the `generate_quantities` mode to 
+solve the system using the prior parameter draws. We won't yet go into detail
+about the meaning of the 
+`RTOL`, `ATOL` and `MAX_NUM_STEPS` control arguments but just give them
+some values and plot the obtained ODE solutions.
 
 ```{r sir_sim_model, message=FALSE}
-
 # Function for simulating ODE solutions and data given parameter( draws)s
-simulate_sir <- function(params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
-                         MAX_NUM_STEPS = 1e6) {
+simulate <- function(model, params, t_sim=NULL, RTOL = 1e-6, ATOL = 1e-6,
+                     MAX_NUM_STEPS = 1e6) {
   if(is.null(t_sim)) t_sim <- data_list$t
   stan_data <- list(
     t = t_sim,
     N = length(t_sim),
     RTOL = RTOL,
-    ATOL = RTOL,
+    ATOL = ATOL,
     MAX_NUM_STEPS = MAX_NUM_STEPS,
     pop_size = data_list$pop_size,
     I0 = data_list$I0
   )
-  sim <- models$sim$generate_quantities(
+  model$generate_quantities(
     data = stan_data, 
     fitted_params = params
   )
 }
-```
 
-We won't yet go into detail about the meaning of the 
-`RTOL`, `ATOL` and `MAX_NUM_STEPS` control arguments but just give them
-some values and plot the obtained ODE solutions.
-
-```{r sir_prior_sim, message=FALSE}
 # Call the above function and extract generated solutions
-prior_sim <- simulate_sir(prior_draws)
+prior_sim <- simulate(sir_models$sim, prior_draws)
 x_prior_sim <- thin_draws(merge_chains(prior_sim$draws("x")), 10)
 I_prior_sim <- x_prior_sim[,1,(N+1):(2*N), drop=TRUE]
 
@@ -229,8 +234,8 @@ plot(data_list$t, rep(data_list$pop_size, data_list$N), type="l", lty=2,
      col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day",
      main = "Solutions using prior param draws")
 for(i_draw in 1:nrow(I_prior_sim)) {
-    I <- as.vector(I_prior_sim[i_draw, ])
-    lines(data_list$t, I, col=alpha("firebrick", 0.1))
+  I <- as.vector(I_prior_sim[i_draw, ])
+  lines(data_list$t, I, col=alpha("firebrick", 0.1))
 }
 points(data_list$t, y, ylim = c(0, 1000), pch=20)
 ```
@@ -246,49 +251,58 @@ reached.
 We repeat the prior ODE solving with different values of `RTOL = ATOL` and 
 check how it affects the solver accuracy and runtime.
 
-```{r sir_test_prior_tols_time, results=FALSE}
-TOL <- 10^seq(-14,-3)
-J <- length(TOL)
-TIME <- rep(0, J)
-I_SIM <- array(0, dim=c(J,4000,N))
-for(j in 1:J) {
-  sim <- simulate_sir(prior_draws, ATOL=TOL[j], RTOL=TOL[j])
-  TIME[j] <- sim$time()$total
-  I_sim  <- merge_chains(sim$draws("x"))[,1,(N+1):(2*N), drop=TRUE]
-  I_SIM[j,,] <- I_sim
+```{r sir_test_prior_tols_time, results = FALSE}
+simulate_many <- function(model, params, atols, rtols, N, D){
+  J1 <- length(atols)
+  J2 <- length(rtols)
+  S <- niterations(params) * nchains(params)
+  TIME <- array(0, dim=c(J1, J2))
+  XSIM <- array(0, dim=c(J1, J2, S, N*D))
+  for(j1 in 1:J1) {
+    for(j2 in 1:J2) {
+      sim <- simulate(model, params, ATOL=atols[j1], RTOL=rtols[j2])
+      XSIM[j1, j2,,]  <- merge_chains(sim$draws("x"))[,1,, drop=TRUE]
+      TIME[j1, j2] <- sim$time()$total
+    }
+  }
+  return(list(times=TIME,sims=XSIM))
 }
-plot(log10(TOL), TIME, "o", pch=16)
-grid()
+
+# Use the above function
+TOLS <- 10^seq(-9,-4) # 10^seq(-14,-3)
+atols <- TOLS
+rtols <- TOLS
+sims <- simulate_many(sir_models$sim, prior_draws, atols, rtols, N, 3)
+```
+
+```{r print_res}
+print(dim(sims$sims))
+print(sims$times)
 ```
 
 We see that reducing the tolerance improves runtime, until some point after
 which it doesn't have much effect anymore.
 
-```{r sir_test_prior_tols_max_error, results=FALSE}
+```{r sir_test_prior_tols_max_error}
 # Compute max absolute difference to most accurate solution
-I_sim_best <- I_SIM[1,,]
-MAE <- rep(0, J)
-for(j in 2:J) {
-  I_sim <- I_SIM[j,,]
-  MAE[j] <- max(abs(as.vector(I_sim_best)-as.vector(I_sim)))
+max_errors <- function(XSIM) {
+  J1 <- dim(XSIM)[1]
+  J2 <- dim(XSIM)[2]
+  MAE <- array(0, dim=c(J1,J2))
+  I_sim_best <- XSIM[1,1,,]
+  for(j1 in 1:J1) {
+    for(j2 in 1:J2) {
+      I_sim <- XSIM[j1,j2,,]
+      MAE[j1,j2] <- max(abs(as.vector(I_sim_best)-as.vector(I_sim)))
+    }
+  }
+  return(MAE)
 }
-plot(log10(TOL)[2:J], log10(MAE)[2:J], "o", pch=16, xlab="log10(TOL)",
-     ylab="log10(max error)")
-grid()
+
+# Call the above function
+max_errors(sims$sims)
 ```
 
-```{r sir_test_prior_tols_mean_error, results=FALSE}
-# Compute mean absolute difference to most accurate solution
-I_sim_best <- I_SIM[1,,]
-MAE <- rep(0, J)
-for(j in 2:J) {
-  I_sim <- I_SIM[j,,]
-  MAE[j] <- mean(abs(as.vector(I_sim_best)-as.vector(I_sim)))
-}
-plot(log10(TOL)[2:J], log10(MAE)[2:J], "o", pch=16, xlab="log10(TOL)",
-     ylab="log10(mean error)")
-grid()
-```
 
 
 # Computational challenges
