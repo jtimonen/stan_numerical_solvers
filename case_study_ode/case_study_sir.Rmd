@@ -226,30 +226,31 @@ and `ATOL` have an effect on the accuracy of this solution. In addition,
 we use `MAX_NUM_STEPS=1e6` and should not have problems with it being
 reached.
 
-We repeat the prior ODE solving with different values of `RTOL = ATOL` and 
-check how it affects the solver accuracy and runtime.
+We repeat the prior ODE solving with different values of `RTOL` and `ATOL`.
 
 ```{r sir_test_prior_tols_time, results = FALSE}
-
-# Simulation with different tolerances
-TOLS <- 10^seq(-9,-4) # 10^seq(-14,-3)
+TOLS <- 10^seq(-13,-3) # 10^seq(-14,-3)
 atols <- TOLS
 rtols <- TOLS
 sims <- simulate_many(sir_models$sim, prior_draws, data_list, atols, rtols)
 ```
 
-```{r print_res}
+We plot the simulation runtime for each case.
+
+```{r print_res, fig.width=8.2, fig.height=4.5}
 plot_sim_times(atols, rtols, sims$times)
 ```
 
-We see that reducing the tolerance improves runtime, until some point after
-which it doesn't have much effect anymore.
+We see that reducing either tolerance parameter generally improves runtime,
+until some point after which it doesn't have much effect anymore. We also
+plot here the mean and maximum absolute error with respect to the solution
+given by the strictest tolerances.
 
-```{r sir_compute_errors}
-max_errors <- compute_errors(sims$sims, "max")
-mean_errors <- compute_errors(sims$sims, "mean")
-plot_sim_errors(atols, rtols, max_errors)
-plot_sim_errors(atols, rtols, mean_errors)
+```{r sir_compute_errors, fig.width=8.2, fig.height=4.5}
+mean_abs_error <- compute_errors(sims$sims, "mean")
+max_abs_error <- compute_errors(sims$sims, "max")
+plot_sim_errors(atols, rtols, mean_abs_error)
+plot_sim_errors(atols, rtols, max_abs_error)
 ```
 
 
