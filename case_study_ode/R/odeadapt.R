@@ -161,13 +161,17 @@ plot_sim_times <- function(atol, rtol, TIME) {
 
 
 # Errors plot
-plot_sim_errors <- function(atol, rtol, ERR) {
-  main <- paste0("log ", deparse(substitute(ERR)))
+plot_sim_errors <- function(atol, rtol, ERR, log = TRUE) {
+  main <- deparse(substitute(ERR))
+  if (log) {
+    ERR <- log(ERR)
+    main <- paste0("log(", main, ")")
+  }
   par(mfrow = c(1, 2))
-  plot(log10(rtol), diag(log(ERR)),
+  plot(log10(rtol), diag(ERR),
     xlab = "log10(tol)", ylab = main,
     type = "o", pch = 16
   )
   grid()
-  image(log10(atol), log10(rtol), log(ERR), main = main)
+  image(log10(atol), log10(rtol), ERR, main = main)
 }

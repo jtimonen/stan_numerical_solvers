@@ -147,7 +147,7 @@ sir_odesolve <- "  vector[D] x[N] = ode_rk45_tol(SIR, x0, t0, t, RTOL, ATOL,
     MAX_NUM_STEPS, a0, to_vector({beta, gamma}));"
 sir_likelihood <- "
   for(n in 1:N) {
-    I_data[n] ~ neg_binomial_2(x[n][2] + 10*ATOL, phi);
+    I_data[n] ~ neg_binomial_2(x[n][2] + 1e-6, phi);
   }
 "
 sir_gq <- "
@@ -155,9 +155,9 @@ sir_gq <- "
   real log_lik = 0.0;
   for(n in 1:N) {
     for(d in 1:D) {
-      y[d,n] = neg_binomial_2_rng(x[n][d] + 10*ATOL, phi); 
+      y[d,n] = neg_binomial_2_rng(x[n][d] + 1e-6, phi); 
     }
-    log_lik += neg_binomial_2_lpmf(I_data[n] | x[n][2] + 10*ATOL, phi);
+    log_lik += neg_binomial_2_lpmf(I_data[n] | x[n][2] + 1e-6, phi);
   }
 "
 data_list$D <- 3
@@ -259,8 +259,8 @@ Finally we also plot the error in log likelihood
 ```{r sir_loglik_errors, fig.width=8.2, fig.height=4.5}
 mean_abs_loglik_error <- compute_loglik_errors(sims$log_liks, "mean")
 max_abs_loglik_error <- compute_loglik_errors(sims$log_liks, "max")
-plot_sim_errors(atols, rtols, mean_abs_loglik_error)
-plot_sim_errors(atols, rtols, max_abs_loglik_error)
+plot_sim_errors(atols, rtols, mean_abs_loglik_error, log=FALSE)
+plot_sim_errors(atols, rtols, max_abs_loglik_error, log=FALSE)
 ```
 
 # Computational challenges
