@@ -106,3 +106,32 @@ simulate_many <- function(model, params, data,
   }
   return(list(times=TIME,sims=XSIM))
 }
+
+# Compute error to most accurate solution
+compute_errors <- function(XSIM, fun="max") {
+  J1 <- dim(XSIM)[1]
+  J2 <- dim(XSIM)[2]
+  ERR <- array(0, dim=c(J1,J2))
+  I_sim_best <- XSIM[1,1,,]
+  for(j1 in 1:J1) {
+    for(j2 in 1:J2) {
+      I_sim <- XSIM[j1,j2,,]
+      abs_errors <- abs(as.vector(I_sim_best)-as.vector(I_sim))
+      ERR[j1,j2] <- eval(call(fun, abs_errors))
+    }
+  }
+  return(ERR)
+}
+
+# Runtimes plot
+plot_sim_times <- function(atols, rtols, TIME) {
+  par(mfrow=c(1,2))
+  image(log10(atols), log10(rtols), TIME, main = "time (s)")
+}
+
+
+# Errors plot
+plot_sim_errors <- function(atols, rtols, ERR) {
+  par(mfrow=c(1,2))
+  image(log10(atols), log10(rtols), log(ERR), main="log error")
+}
