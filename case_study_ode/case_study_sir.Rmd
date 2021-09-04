@@ -30,11 +30,11 @@ library(loo)
 library(stats)
 library(outbreaks)
 
-rng_seed_r <- 999 # rng seed for MCMC
-rng_seed_stan <- 123 # rng seed for data simulation
-set.seed(rng_seed_r)
-SIG_FIGS <- 18
-print_lines <- function(file) {cat(readLines(file), sep="\n")}
+# Options
+stan_opts <- list(
+  seed = 123,
+  sig_figs = 18
+)
 ```
 
 # Introduction
@@ -147,7 +147,7 @@ sir_odesolve <- "  vector[D] x[N] = ode_rk45_tol(SIR, x0, t0, t, RTOL, ATOL,
     MAX_NUM_STEPS, a0, to_vector({beta, gamma}));"
 sir_likelihood <- "
   for(n in 1:N) {
-    I_data[n] ~ neg_binomial_2(x[n][2] + 1e-6, phi);
+    I_data[n] ~ neg_binomial_2(x[n][2] + 10*ATOL, phi);
   }
 "
 sir_gq <- "
@@ -155,9 +155,9 @@ sir_gq <- "
   real log_lik = 0.0;
   for(n in 1:N) {
     for(d in 1:D) {
-      y[d,n] = neg_binomial_2_rng(x[n][d] + 1e-6, phi); 
+      y[d,n] = neg_binomial_2_rng(x[n][d] + 10*ATOL, phi); 
     }
-    log_lik += neg_binomial_2_lpmf(I_data[n] | x[n][2] + 1e-6, phi);
+    log_lik += neg_binomial_2_lpmf(I_data[n] | x[n][2] + 10*ATOL, phi);
   }
 "
 data_list$D <- 3
@@ -185,8 +185,8 @@ We sample the model and extract prior draws of the parameters.
 
 ```{r sample_prior}
 prior_fit <- sir_models$prior$sample(
-  sig_figs = SIG_FIGS, 
-  seed = rng_seed_stan,
+  sig_figs = stan_opts$sig_figs, 
+  seed = stan_opts$seed,
   refresh = 1000
 )
 print(prior_fit)
@@ -205,7 +205,7 @@ some values and plot the obtained ODE solutions.
 
 ```{r sir_sim_model, message=FALSE}
 # Simulate and extract generated solutions
-prior_sim <- simulate(sir_models$sim, prior_draws, data_list)
+prior_sim <- simulate(sir_models$sim, prior_draws, data_list, stan_opts)
 x_prior_sim <- thin_draws(merge_chains(prior_sim$draws("x")), 10)
 I_prior_sim <- x_prior_sim[,1,(N+1):(2*N), drop=TRUE]
 
@@ -231,10 +231,11 @@ reached.
 We repeat the prior ODE solving with different values of `RTOL` and `ATOL`.
 
 ```{r sir_test_prior_tols_time, results = FALSE}
-TOLS <- 10^seq(-10,-4) # 10^seq(-14,-3)
+TOLS <- 10^seq(-12,-3) # 10^seq(-14,-3)
 atols <- TOLS
 rtols <- TOLS
-sims <- simulate_many(sir_models$sim, prior_draws, data_list, atols, rtols)
+sims <- simulate_many(sir_models$sim, prior_draws, data_list, stan_opts,
+                      atols, rtols)
 ```
 
 We plot the simulation runtime for each case.

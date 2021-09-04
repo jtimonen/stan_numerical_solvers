@@ -75,8 +75,17 @@ create_cmdstan_models <- function(funs, data, tdata, obsdata, pars,
   return(models)
 }
 
+# Print solver argument info
+cat_sa <- function(sa) {
+  msg <- paste0(
+    "* RTOL=", sa$RTOL, ", ATOL=", sa$ATOL, ", MAX_NUM_STEPS=",
+    sa$MAX_NUM_STEPS, "\n"
+  )
+  cat(msg)
+}
+
 # Function for simulating ODE solutions and data given parameter( draws)s
-simulate <- function(model, params, data, solver_args = list()) {
+simulate <- function(model, params, data, stan_opts, solver_args = list()) {
   stopifnot(is(model, "CmdStanModel"))
   stopifnot(is(params, "draws"))
   stopifnot(is(data, "list"))
@@ -84,14 +93,17 @@ simulate <- function(model, params, data, solver_args = list()) {
   if (is.null(solver_args$RTOL)) solver_args$RTOL <- 1e-6
   if (is.null(solver_args$ATOL)) solver_args$ATOL <- 1e-6
   if (is.null(solver_args$MAX_NUM_STEPS)) solver_args$MAX_NUM_STEPS <- 1e6
+  cat_sa(solver_args)
   model$generate_quantities(
     data = c(data, solver_args),
-    fitted_params = params
+    fitted_params = params,
+    seed = stan_opts$seed,
+    sig_figs = stan_opts$sig_figs
   )
 }
 
 # Using simulate with different tolerances
-simulate_many <- function(model, params, data,
+simulate_many <- function(model, params, data, stan_opts,
                           atol, rtol, MAX_NUM_STEPS = NULL) {
   stopifnot(is(params, "draws"))
   J1 <- length(atol)
@@ -107,10 +119,20 @@ simulate_many <- function(model, params, data,
         RTOL = rtol[j2],
         MAX_NUM_STEPS = MAX_NUM_STEPS
       )
-      sim <- simulate(model, params, data, solver_args)
-      XSIM[j1, j2, , ] <- merge_chains(sim$draws("x"))[, 1, , drop = TRUE]
-      TIME[j1, j2] <- sim$time()$total
-      LL[j1, j2, ] <- merge_chains(sim$draws("log_lik"))[, 1, 1, drop = TRUE]
+      tryCatch(
+        expr = {
+          sim <- simulate(model, params, data, stan_opts, solver_args)
+          XSIM[j1, j2, , ] <- merge_chains(sim$draws("x"))[, 1, , drop = TRUE]
+          TIME[j1, j2] <- sim$time()$total
+          LL[j1, j2, ] <- merge_chains(sim$draws("log_lik"))[, 1, 1, drop = TRUE]
+        },
+        error = function(e) {
+          message("Caught an error in simulate! Likely MAX_NUM_STEPS was too",
+                  " low or negative solution was obtained so likelihood could",
+                  " not be computed!")
+          stop(e)
+        }
+      )
     }
   }
   return(list(times = TIME, sims = XSIM, log_liks = LL))
