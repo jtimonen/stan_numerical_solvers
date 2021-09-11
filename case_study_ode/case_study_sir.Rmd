@@ -204,20 +204,26 @@ about the meaning of the
 some values and plot the obtained ODE solutions.
 
 ```{r sir_sim_model, message=FALSE}
-# Simulate and extract generated solutions
+# Simulate solutions using prior draws
 prior_sim <- simulate(sir_models$sim, prior_draws, data_list, stan_opts)
-x_prior_sim <- thin_draws(merge_chains(prior_sim$draws("x")), 10)
-I_prior_sim <- x_prior_sim[,1,(N+1):(2*N), drop=TRUE]
 
-# Plot agaist data
-plot(data_list$t, rep(data_list$pop_size, data_list$N), type="l", lty=2,
-     col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day",
-     main = "Solutions using prior param draws")
-for(i_draw in 1:nrow(I_prior_sim)) {
-  I <- as.vector(I_prior_sim[i_draw, ])
-  lines(data_list$t, I, col=alpha("firebrick", 0.1))
+# Function that plots solutions against data
+plot_sir_example_solutions <- function(sim, data, thin=1, main="") {
+  x_sim <- thin_draws(merge_chains(sim$draws("x")), thin)
+  I_sim <- x_sim[,1,(N+1):(2*N), drop=TRUE]
+  plot(data$t, rep(data$pop_size, data$N), type="l", lty=2,
+       col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day",
+       main = main)
+  for(i_draw in 1:nrow(I_sim)) {
+    I <- as.vector(I_sim[i_draw, ])
+    lines(data$t, I, col=alpha("firebrick", 0.1))
+  }
+  points(data$t, data$I_data, ylim = c(0, 1000), pch=20)
 }
-points(data_list$t, data_list$I_data, ylim = c(0, 1000), pch=20)
+
+# Call the above function
+title <- "Solutions using prior param draws"
+plot_sir_example_solutions(prior_sim, data_list, thin=10, main=title)
 ```
 
 ## Analyzing the numerical method
@@ -231,7 +237,7 @@ reached.
 We repeat the prior ODE solving with different values of `RTOL` and `ATOL`.
 
 ```{r sir_test_prior_tols_time, results = FALSE}
-TOLS <- 10^seq(-12,-3) # 10^seq(-14,-3)
+TOLS <- 10^seq(-8,-4) # 10^seq(-14,-3)
 atols <- TOLS
 rtols <- TOLS
 sims <- simulate_many(sir_models$sim, prior_draws, data_list, stan_opts,
@@ -401,5 +407,77 @@ precision ODE solver to do inference and then check it afterwards against
 a high precision solver. This is useful in practice if sampling with the
 high precision solver itself would take an inordinate amount of time.
 
+```{r print_posterior_model}
+sir_models$posterior
+```
+
+We sample the model and extract posterior draws of the parameters.
+
+### 1. Generate draws from $p_{low}$.
+
+```{r sample_posterior, message=FALSE}
+solver_args_sample <- list(
+  ATOL = 1e-6,
+  RTOL = 1e-6,
+  MAX_NUM_STEPS=1e6
+)
+posterior_fit <- sir_models$posterior$sample(
+  data = c(data_list, solver_args_sample),
+  sig_figs = stan_opts$sig_figs, 
+  seed = stan_opts$seed,
+  refresh = 1000
+)
+```
+
+```{r print_post}
+print(posterior_fit)
+posterior_draws <- posterior_fit$draws(c("beta", "gamma", "phi_inv"))
+```
+
+These draws will be passed again to `sir_models$sim`
+
+```{r sir_sim_posterior, message=FALSE}
+# Simulate and plot generated solutions
+posterior_sim <- simulate(sir_models$sim, posterior_draws, data_list, stan_opts,
+                          solver_args = solver_args_sample)
+
+title <- "Solutions using posterior param draws"
+plot_sir_example_solutions(posterior_sim, data_list, thin=10, main=title)
+```
+
+```{r sir_sim_posterior_check, message=FALSE}
+solver_args_check <- list(
+  ATOL = 1e-10,
+  RTOL = 1e-10,
+  MAX_NUM_STEPS=1e12
+)
+posterior_sim_check <- simulate(sir_models$sim, posterior_draws, data_list,
+                                stan_opts, solver_args = solver_args_check)
+```
+
+2. Tune the numerical method in $M_{high}$ so that it is reliable at
+these draws. All application specific knowledge and classical numerical
+analysis can be used here.
+3. Compute importance weights $\frac{p_{high}}{p_{low}}$
+4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
+the numerical method in $M_{low}$ and go back to step 1.
+5. Resample draws of $M_{low}$, using importance weights to get draws from
+$M_{high}$, and therefore essentially draws from $M$.
+
+# Warning messages
+
+During posterior sampling, it is typical that the following 
+```{messages_header}
+## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:
+```
+occurs multiple times, followed by one of these
+```{messages_content}
+## Chain 1 Exception: ode_rk45_tol: ode parameters and data[1] is inf, but must be finite! (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 50, column 2 to line 51, column 49)
+
+## Chain 1 Exception: neg_binomial_2_lpmf: Location parameter is nan, but must be positive finite! (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 54, column 4 to column 55)
+
+## Chain 2 Exception: ode_rk45_tol:  Failed to integrate to next output time (1) in less than max_num_steps steps (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 50, column 2 to line 51, column 49)
+```
+messages.
 
 ## References

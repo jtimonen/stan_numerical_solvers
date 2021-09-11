@@ -90,9 +90,9 @@ simulate <- function(model, params, data, stan_opts, solver_args = list()) {
   stopifnot(is(params, "draws"))
   stopifnot(is(data, "list"))
   stopifnot(is(solver_args, "list"))
-  if (is.null(solver_args$RTOL)) solver_args$RTOL <- 1e-6
-  if (is.null(solver_args$ATOL)) solver_args$ATOL <- 1e-6
-  if (is.null(solver_args$MAX_NUM_STEPS)) solver_args$MAX_NUM_STEPS <- 1e6
+  if (is.null(solver_args$RTOL)) solver_args$RTOL <- 1e-6 # default
+  if (is.null(solver_args$ATOL)) solver_args$ATOL <- 1e-6 # default
+  if (is.null(solver_args$MAX_NUM_STEPS)) solver_args$MAX_NUM_STEPS <- 1e6 # def
   cat_sa(solver_args)
   model$generate_quantities(
     data = c(data, solver_args),
@@ -127,9 +127,11 @@ simulate_many <- function(model, params, data, stan_opts,
           LL[j1, j2, ] <- merge_chains(sim$draws("log_lik"))[, 1, 1, drop = TRUE]
         },
         error = function(e) {
-          message("Caught an error in simulate! Likely MAX_NUM_STEPS was too",
-                  " low or negative solution was obtained so likelihood could",
-                  " not be computed!")
+          message(
+            "Caught an error in simulate! Likely MAX_NUM_STEPS was too",
+            " low or negative solution was obtained so likelihood could",
+            " not be computed!"
+          )
           stop(e)
         }
       )
