@@ -419,7 +419,7 @@ We sample the model and extract posterior draws of the parameters.
 solver_args_sample <- list(
   ATOL = 1e-6,
   RTOL = 1e-6,
-  MAX_NUM_STEPS=1e6
+  MAX_NUM_STEPS=1e12
 )
 posterior_fit <- sir_models$posterior$sample(
   data = c(data_list, solver_args_sample),
@@ -427,6 +427,8 @@ posterior_fit <- sir_models$posterior$sample(
   seed = stan_opts$seed,
   refresh = 1000
 )
+print(posterior_fit$output(1))
+
 ```
 
 ```{r print_post}
@@ -453,6 +455,12 @@ solver_args_check <- list(
 )
 posterior_sim_check <- simulate(sir_models$sim, posterior_draws, data_list,
                                 stan_opts, solver_args = solver_args_check)
+
+print(posterior_sim_check$output(1))
+print(posterior_sim_check$output(2))
+print(posterior_sim_check$output(3))
+print(posterior_sim_check$output(4))
+print(rcc)
 ```
 
 2. Tune the numerical method in $M_{high}$ so that it is reliable at
