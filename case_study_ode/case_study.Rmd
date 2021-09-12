@@ -19,345 +19,474 @@ bibliography: references.bib
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Solving the system
+```{r load, message=FALSE}
+# Requirements
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(checkmate)
+library(loo)
+library(stats)
+library(outbreaks)
+library(scales)
+library(ggplot2)
 
-We will import a function from `sir.stan` for solving the ODE.
-It uses the `integrate_ode_rk45` function that is built into Stan.
-The actual function exposed from the Stan model (`stan_solve_sir`) is a bit
-awkward so we rewrap it here in a way that is easier to use.
-
-```{r sir_solve}
-expose_stan_functions(model)
-
-# Solve the SIR system
-# - theta = c(beta, gamma), parameters
-# - opts = c(rtol, atol, max_num_steps), solver options
-# - ts = vector of output time points
-solve_sir <- function(ts, theta, opts) {
-  stan_solve_sir(ts, theta, c(0), opts[1], opts[2], opts[3])
-}
-```
-
-The RK45 solver in Stan is an adaptive time step solver, which estimates the
-local error of the solution and adapts its step size so that the local error
-estimates are less than `atol + rtol * abs(y)`, where `y` is the ODE solution,
-and `atol` and `rtol` are called absolute and relative tolerance,
-respectively. These tolerances need to be given, and affect both the accuracy
-and computational cost of the solution. In general, `rtol` is the tolerance on
-the relative error the solver can make when `y` is far from zero. When `abs(y)`
-is small (of the order of `atol` or smaller), there is no need to achieve the
-relative tolerance.
-
-A third control parameter, `max_num_steps`, determines the maximum number of
-steps that can be taken to achieve the tolerance. In practice, we have
-observed that setting this to a much smaller value than the default can
-lower the warmup times of some chains by several orders of magnitude. This can
-be because it possibly helps in rejecting or quickly getting out of 
-initial low-probability parameter regions, where the ODE solutions blow up and achieving the tolerances would require a much larger number of steps than in
-the good parameter region.
-
-We can just pick some options and quickly run and plot a solution
-just to get a feel for what the system looks like:
-
-```{r sir_plot}
-plot_sir <- function(t, y) {
-  y %>%
-    as_tibble() %>%
-    setNames(c("I")) %>%
-    mutate(Day = t) %>%
-    ggplot(aes(Day, I)) +
-    geom_line() +
-    geom_point() +
-    ylab("Infected people")
-}
-
-ts <- seq(0.1, 16, by = 0.1)
-theta_true <- c(1, 0.2) # true parameter values
-opts <- c(1e-4, 1e-4, 100)
-ys <- solve_sir(ts, theta_true, opts)
-plot_sir(ts, ys)
-```
-
-## Generating test data
-
-To test fitting our model we will create noisy measurements of the number of infected people (I) at each day. If we're going to generate data from our model we better have an accurate ODE solver, otherwise we're just generating data
-from some weird approximate model.
-
-The simplest way to check that an `atol` and `rtol` are suitable is to do
-a solve at one tolerance level, repeat the solve at a much smaller (more
-precise) tolerance, and then look at the maximum absolute error at any output
-point. We will create a function to do this automatically:
-
-```{r sir_check}
-check_reliability_sir <- function(theta, opts) {
-  ts <- seq(0.1, 16, by = 0.1)
-  y_hat <- solve_sir(ts, theta, opts)
-  opts_strict <- c(opts[1] / 10, opts[2] / 10, opts[3])
-  y_hat_strict <- solve_sir(ts, theta, opts_strict)
-  max_abs_err <- max(abs(y_hat - y_hat_strict))
-  return(max_abs_err)
-}
-```
-
-We can study the maximum absolute error compared to a solution with 10 times
-smaller tolerances, as a function `tol = atol = rtol`. Value of `max_num_steps` is kept constant, but if a solver should fail to compute a solution in
-those steps, an error is thrown and it needs to be increased. 
-
-```{r sir_tols, fig.width=7, fig.height=3.5}
-mae_true <- c()
-tols <- 10^(-c(1:12))
-for (tol in tols) {
-  opts <- c(tol, tol, 1e7)
-  mae_true <- c(mae_true, check_reliability_sir(theta_true, opts))
-}
-
-qplot(tols, mae_true, geom = c("point", "line")) +
-  scale_x_log10() +
-  scale_y_log10() + ylab("Max. absolute error") + xlab("Tolerance")
-```
-
-From this and our prior knowledge of infectious diseases, we assert
-that $10^{-6}$ is a good enough value to use for `atol` and `rtol` during
-simulation. Certainly we do not expect have a count of the infected
-population accurate to $10^{-4}$ people.
-
-We generate the observed number of infected people (cases) at each time point
-$t_i$, from a negative binomial distribution with mean equal to the solution of
-$S(t_i)$ from the ODE, and dispersion parameter $\phi = 5$.
-
-```{r sir_noise, fig.width=7, fig.height=4.8}
-atol <- 1e-6
-rtol <- 1e-6
-opts <- c(atol, rtol, 1e7)
-
-N <- 16 # number of data points
-t_data <- seq(1, N)
-dispersion <- 5 # noise parameter for negative binomial
-mu <- solve_sir(t_data, theta_true, opts)
-y_data <- rnbinom(length(t_data), mu = mu, size = dispersion)
-
-tibble(t = t_data, mu = mu, y = y_data) %>%
-  ggplot() +
-  geom_line(aes(t, mu), col = "firebrick") +
-  geom_point(aes(t, y)) +
-  xlab("Day") +
-  ylab("Infected people") +
-  ggtitle("Simulated data as points \nUnderlying solution as lines")
-```
-
-## Likelihood
-
-We also define an R function that computes the likelihood given the data,
-parameter values and solver options.
-```{r sir_likelihood, fig.width=7, fig.height=4.5, results=FALSE}
-# Likelihood function for the SIR model
-# - t_data = vector of measurement times
-# - y_data = vector of measurements of number of infected people
-# - params = parameter vector c(beta, gamma, phi)
-# - opts = c(rtol, atol, max_num_steps), solver options
-log_likelihood_sir <- function(t_data, y_data, params, opts) {
-  theta <- params[1:2]
-  phi <- params[3]
-  y_hat <- solve_sir(t_data, theta, opts)
-  log_lh <- sum(dnbinom(y_data, size = phi, mu = y_hat, log = TRUE))
-  return(log_lh)
-}
-```
-
-## Applying the workflow
-
-As a reminder, our mission in fitting this ODE is to use a low precision
-solver. It is always tempting to use low precision solvers when working
-with ODEs because they (usually) run faster. The difficulty becomes how to
-deal with the coarser approximation. Does the lower precision cause an effect
-that matters? If so, can it be corrected and how? These are the questions the
-workflow here will allow us to answer.
-
-### Generating draws from $p_{low}$
-
-The first step in the workflow is to take any low precision approximation 
-($M_{low}$) and fit the data. Remember, all our numerical methods are
-approximations, and so we refer to this model specifically as a low precision
-model. We will check it against a higher precision model later. In this case,
-we will use `rtol = 1e-4`, `atol = 1e-3`.
-
-```{r sir_fit, fig.width=7, fig.height=4.5, results=FALSE}
-opts_low <- c(1e-4, 1e-3, 100)
-stan_data <- list(
-  N = length(t_data),
-  t_data = t_data,
-  y_data = y_data,
-  rtol = opts_low[1],
-  atol = opts_low[2],
-  max_num_steps = opts_low[3]
-)
-
-fit1 <- rstan::sampling(model,
-                       stan_data,
-                       seed = rng_seed_stan,
-                       cores = 4
+# Options
+stan_opts <- list(
+  seed = 123,
+  sig_figs = 18
 )
 ```
 
+# Introduction
 
-```{r sir_summary}
-pars <- c("beta", "gamma", "phi")
-draws1 <- get_draws(fit1, pars)
-print(fit1, pars = c("beta", "gamma", "phi"))
+## ODEs
+
+Ordinary differential equations (ODEs) 
+
+\begin{equation}
+\frac{\text{d} \textbf{x}(t)}{\text{d} t} = f_{\nu}(\textbf{x}(t), t)
+\end{equation}
+
+are a model for the rate of change in some quantities $\textbf{x}(t)$.
+Many fields of science utilize ODEs and have laws that define the function $f_{\nu}$ for a specific problem, but it is common that its parameters $\nu$
+are unknown and need to be inferred. It is common that we have time-course data
+$\{(t_n, \textbf{y}_n)\}_{n=1}^N$, observed at time points $t_n \neq t_0$, and
+we need to calculate $\textbf{x}(t_n)$ for each $n=1, \ldots, N$, in order to
+compute likelihood of the data. Given initial value  
+$\textbf{x}(t_0) = \textbf{x}_0$, and assuming some smoothness requirements for
+$f_{\nu}$, there exists a unique solution for $\textbf{x}(t)$, 
+$t \in \mathbb{R}$. This solution is given by the integral formula
+\begin{equation}
+\textbf{x}(t) = \textbf{x}_0 + \int_{t_0}^t f_{\nu}(\textbf{x}(\tau), \tau) 
+\text{d} \tau,
+\end{equation}
+
+but the integral usually doesn't have a closed form, and numerical methods are required.
+
+## SIR example
+
+We use data from the **outbreaks** package. In the variable `I_data`,
+we store the number of infected people on 14 consecutive days.
+```{r sir_data}
+I_data <- influenza_england_1978_school$in_bed
+N <- length(I_data)
+data_list <- list(
+  I_data = I_data,
+  N = N,
+  t = seq(1, N),
+  I0 = 1,
+  pop_size = 763
+)
+print(data_list)
 ```
 
-### Developing a reference model
+We create a classic Susceptible-Infected-Recovered (SIR) model of disease
+spread. The code is adapted from that in the Stan Case Study [@grinsztajn2020], 
+which provides an introduction to disease
+transmission modeling in Stan in general. The states of the ODE are expected
+amounts of susceptible (S), infected (I) and recovered
+(R) people. The dynamics are given by the ODE system:
 
-Before we can check if the importance sampling correction is possible, we
-need to have a reference model ($M_{high}$) to compare against. That means we
-need a version of the model with tolerances such that it is suitably accurate
-across all the posterior draws generated from the low precision model.
+\begin{align}
+\frac{dS}{dt} &= -\beta \cdot I \cdot \frac{S}{N_{pop}} \\
+\frac{dI}{dt} &=  \beta  \cdot I \cdot \frac{S}{N_{pop}} - \gamma \cdot I \\
+\frac{dR}{dt} &=  \gamma \cdot I,
+\end{align}
+where $N_{pop}$ is the population size. Using the above notation, we have
+$\textbf{x}(t) = [S(t), I(t), R(t)]^{\top}$ and $\nu = \{\beta, \gamma\}$. 
 
-In this case, `rtol = atol = 1e-6` was accurate enough generating the data,
-so let's check if it is accurate in all the draws in this posterior.
+The actual number of infected people, which we denote by $y(t)$
+is then assumed to follow a negative binomial distribution with mean
+$I(t)$ and inverse overdispersion $\phi$. All model parameters are collected
+in a vector $\theta = \{\beta, \gamma, \phi\}$.
 
-```{r sir_tune}
-# Check reliability at each draw and add MAEs to data frame
-compute_errors_sir <- function(df, opts) {
-  num_draws <- nrow(df)
-  mae <- c()
-  for (i in 1:num_draws) {
-    theta <- as.numeric(df[i, c("beta", "gamma")])
-    mae_i <- check_reliability_sir(theta, opts)
-    mae <- c(mae, mae_i)
+## Stan code
+
+```{r sir_stan_code, message=FALSE}
+sir_pars <- "
+  real<lower=0> beta;
+  real<lower=0> gamma;
+  real<lower=0> phi_inv;
+"
+sir_tpars <- "  real phi = inv(phi_inv);"
+sir_prior <- "
+  beta ~ normal(2, 1);
+  gamma ~ normal(0.4, 0.5);
+  phi_inv ~ exponential(5);
+"
+sir_funs <- "
+  // SIR system right-hand side
+  vector SIR(real t, vector y, data int[] a0, vector theta) {
+    vector[3] dx_dt;
+    int pop_size = a0[1];
+    real infection_rate = theta[1] * y[2] * y[1] / pop_size;
+    real recovery_rate = theta[2] * y[2];
+    dx_dt[1] = - infection_rate;
+    dx_dt[2] = infection_rate - recovery_rate;
+    dx_dt[3] = recovery_rate;
+    return dx_dt;
   }
-  df$mae <- mae
-  return(df)
-}
-
-opts_high <- c(1e-6, 1e-6, 1e8)
-ode_pars <- c("beta", "gamma")
-draws1 <- compute_errors_sir(draws1, opts_high)
-
-p1 <- scatter_colored(draws1, "beta", "gamma", "mae")
-p2 <- scatter_colored(draws1, "beta", "phi", "mae")
-p3 <- scatter_colored(draws1, "gamma", "phi", "mae")
-ggarrange(p1, p2, p3)
-```
-
-We can plot this as a distribution and see that `rtol = atol = 1e-6` keeps
-us under an absolute error of one milliperson. This seems accurate enough.
-
-```{r sir_hist, message=FALSE}
-qplot(draws1$mae, geom = "histogram")
-```
-
-### Computing importance weights
-
-With the reference model in place, it is time to compute the importance
-weights $\frac{p_{high}}{p_{low}}$ for each post-warmup draw. This is simple:
-just compute the log density of the reference model and the log
-density of the low precision model and take the difference (we work
-with the log of the importance ratios $\log p_{high} - \log p_{low}$
-for numeric stability).
-
-The hidden downside is that it might take some time to compute the log
-densities of the reference model for each draw. It should still be way faster
-than sampling with the reference model itself, since we don't need to compute
-gradients, HMC trajectories, evaluate proposals that can be rejected, and 
-skip the whole warmup period. Therefore we likely won't have to try to do
-accurate ODE solves in the ill-behaved parameter regions, where a huge number
-of steps would be needed to achieve the tolerances. Another upside is that
-the calculations could be done in parallel for each draw.
-
-If the priors are kept the same between the reference and low precision
-model, then those can be left out of this calculation (they will cancel).
-
-```{r sir_weights}
-# Compute log likelihood ratio for each draw and add to data frame
-log_ratios_sir <- function(df) {
-  num_draws <- nrow(df)
-  log_lh_low <- rep(0, num_draws)
-  log_lh_high <- rep(0, num_draws)
-  for (i in seq_len(num_draws)) {
-    params_i <- as.numeric(df[i, c("beta", "gamma", "phi")])
-    log_lh_low[i] <- log_likelihood_sir(t_data, y_data, params_i, opts_low)
-    log_lh_high[i] <- log_likelihood_sir(t_data, y_data, params_i, opts_high)
+"
+sir_data <- "
+  int<lower=1> N; // number of time points
+  int<lower=3,upper=3> D; // dimension of ODE
+  real t[N]; // time points
+  int<lower=1> pop_size; // population size
+  real<lower=1> I0; // initial number of infected
+  real<lower=0> rel_tol; // ODE solver relative tolerance
+  real<lower=0> abs_tol; // ODE solver absolute tolerance
+  int<lower=0> max_num_steps; // ODE solver maximum number of steps
+"
+sir_tdata <- "
+  real t0 = 0.0;
+  int a0[1] = {pop_size};
+  vector[D] x0 = to_vector({pop_size - I0, I0, 0.0}); // {S, I, R}
+"
+sir_obsdata <- "  int<lower=0> I_data[N];"
+sir_odesolve <- "  vector[D] x[N] = ode_rk45_tol(SIR, x0, t0, t, rel_tol, 
+    abs_tol, max_num_steps, a0, to_vector({beta, gamma}));"
+sir_likelihood <- "
+  for(n in 1:N) {
+    I_data[n] ~ neg_binomial_2(x[n][2] + 10*abs_tol, phi);
   }
-  df$log_ratio <- log_lh_high - log_lh_low
-  return(df)
+"
+sir_gq <- "
+  int y[D, N];
+  real log_lik = 0.0;
+  for(n in 1:N) {
+    for(d in 1:D) {
+      y[d,n] = neg_binomial_2_rng(x[n][d] + 10*abs_tol, phi); 
+    }
+    log_lik += neg_binomial_2_lpmf(I_data[n] | x[n][2] + 10*abs_tol, phi);
+  }
+"
+data_list$D <- 3
+```
+
+We create and compile three Stan models.
+```{r sir_compile, message=FALSE}
+source("R/odeadapt.R")
+sir_models <- create_cmdstan_models(sir_funs, sir_data, sir_tdata, sir_obsdata,
+                                    sir_pars, sir_tpars,
+                                    sir_prior, sir_odesolve, 
+                                    sir_likelihood, sir_gq)
+```
+
+## Solving the ODE system
+We wish to demonstrate solving the ODE system, but because we don't know the
+values of the parameters, we first draw them from a prior distribution
+using the first Stan model.
+
+```{r print_stan_model_prior}
+sir_models$prior
+```
+
+We sample the model and extract prior draws of the parameters.
+
+```{r sample_prior}
+prior_fit <- sir_models$prior$sample(
+  sig_figs = stan_opts$sig_figs, 
+  seed = stan_opts$seed,
+  refresh = 1000
+)
+print(prior_fit)
+prior_draws <- prior_fit$draws(c("beta", "gamma", "phi_inv"))
+```
+
+These draws will be passed to the second Stan model
+```{r print_stan_model_sim}
+sir_models$sim
+```
+that can be called in the `generate_quantities` mode to 
+solve the system using the prior parameter draws. We won't yet go into detail
+about the meaning of the 
+`rel_tol`, `abs_tol` and `max_num_steps` control arguments but just give them
+some values and plot the obtained ODE solutions.
+
+```{r sir_sim_model, message=FALSE}
+default_solver_args <- list(
+  rel_tol = 1e-6,
+  abs_tol = 1e-6,
+  max_num_steps = 1e9
+)
+# Simulate solutions using prior draws
+prior_sim <- simulate(sir_models$sim, prior_draws, data_list, 
+                      default_solver_args, stan_opts)
+
+# Function that plots solutions against data
+plot_sir_example_solutions <- function(sim, data, thin=1, main="") {
+  x_sim <- thin_draws(merge_chains(sim$draws("x")), thin)
+  I_sim <- x_sim[,1,(N+1):(2*N), drop=TRUE]
+  plot(data$t, rep(data$pop_size, data$N), type="l", lty=2,
+       col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day",
+       main = main)
+  for(i_draw in 1:nrow(I_sim)) {
+    I <- as.vector(I_sim[i_draw, ])
+    lines(data$t, I, col=alpha("firebrick", 0.1))
+  }
+  points(data$t, data$I_data, ylim = c(0, 1000), pch=20)
 }
 
-draws1 <- log_ratios_sir(draws1)
-p1 <- scatter_colored(draws1, "beta", "gamma", "log_ratio")
-p2 <- scatter_colored(draws1, "beta", "phi", "log_ratio")
-p3 <- scatter_colored(draws1, "gamma", "phi", "log_ratio")
-ggarrange(p1, p2, p3)
+# Call the above function
+title <- "Solutions using prior param draws"
+plot_sir_example_solutions(prior_sim, data_list, thin=10, main=title)
 ```
 
-We can plot the log importance ratios and see they are all close to zero
-(which means out approximation was not too bad).
+## Analyzing the numerical method
+The solution provided by a numerical method is always an approximation to the
+true solution. For the ODE solvers in Stan, the control arguments `RTOL` 
+and `ATOL` have an effect on the accuracy of this solution. In addition,
+`MAX_NUM_STEPS` affects whether a solution can be obtained at all. Here
+we use `MAX_NUM_STEPS=1e6` and should not have problems with it being
+reached.
 
-```{r sir_weight_hist, message=FALSE}
-qplot(draws1$log_ratios, geom = "histogram")
+We repeat the prior ODE solving with different values of `RTOL` and `ATOL`.
+
+```{r sir_test_prior_tols_time, results = FALSE}
+TOLS <- 10^seq(-8,-4) # 10^seq(-14,-3)
+atols <- TOLS
+rtols <- TOLS
+sims <- simulate_many(sir_models$sim, prior_draws, data_list, stan_opts,
+                      atols, rtols, default_solver_args$max_num_steps)
 ```
 
-### Computing $\hat{k}$ diagnostic
+We plot the simulation runtime for each case.
 
-With the importance ratios calculated, we can check if they are usable or not
-with the PSIS $\hat{k}$ diagnostic.
-
-```{r sir_pareto}
-r_eff1 <- loo::relative_eff(x = exp(-draws1$log_ratio), draws1$chain_id)
-psis1 <- loo::psis(draws1$log_ratio, r_eff = r_eff1)
-print(psis1$diagnostics)
-print(psis1)
+```{r print_res, fig.width=8.2, fig.height=4.5}
+plot_sim_times(atols, rtols, sims$times)
 ```
 
-$\hat{k} < 0.5$, and so importance sampling should be reliable.
+We see that reducing either tolerance parameter generally improves runtime,
+until some point after which it doesn't have much effect anymore. We also
+plot here the mean and maximum absolute error with respect to the solution
+given by the strictest tolerances.
 
-### Resampling
-
-At this point we have a weighted set of posterior draws. It
-is usually easier to work with a set of draws than a set of weighted draws, so
-we can resample our weighted draws to become a set of unweighted draws using
-`posterior::resample_draws`. The effective sample size will be slightly
-lowered by such a resampling, but unweighted draws are really more convenient
-to work with.
-
-Just because it is possible to do an importance sampling correction on a set
-of draws does not mean that unweighted statistics on these draws are safe
-to use. In this case, the results are not much different, but it should not
-be forgotten:
-
-```{r sir_resample}
-w1 <- exp(draws1$log_ratio)
-draws1_list <- rstan::extract(fit1, c("beta", "gamma", "phi"))
-draws_df1 <- posterior::as_draws_df(draws1_list)
-resampled_df1 <- posterior::resample_draws(draws_df1, weights = w1)
-
-print(draws_df1 %>% posterior::summarize_draws())
-print(resampled_df1 %>% posterior::summarize_draws())
+```{r sir_sol_errors, fig.width=8.2, fig.height=4.5}
+mean_abs_sol_error <- compute_sol_errors(sims$sims, "mean")
+max_abs_sol_error <- compute_sol_errors(sims$sims, "max")
+plot_sim_errors(atols, rtols, mean_abs_sol_error)
+plot_sim_errors(atols, rtols, max_abs_sol_error)
 ```
 
-# Conclusions
-
-And that is that! Happy approximating!
-
-# Computation environment
-
-```{r computational_environment, echo=FALSE}
-sessionInfo()
-cat(paste0("Initial rng seed was ", rng_seed_r, "\n"))
-cat(paste0("Stan rng seed was ", rng_seed_stan, "\n"))
-
-# Result check
-pareto_k_check <- function(res, expected_ok = TRUE) {
-  arg_name <- deparse(substitute(res))
-  khat <- res$diagnostics$pareto_k
-  msg <- paste0("In ", arg_name, ", pareto_k was ", round(khat, 5), "\n")
-  cat(msg)
-  return(khat)
-}
-khat1 <- pareto_k_check(psis1)
-if (khat1 > 0.5) {
-  stop("Results inconsistent with text!")
-}
+Finally we also plot the error in log likelihood
+```{r sir_loglik_errors, fig.width=8.2, fig.height=4.5}
+mean_abs_loglik_error <- compute_loglik_errors(sims$log_liks, "mean")
+max_abs_loglik_error <- compute_loglik_errors(sims$log_liks, "max")
+plot_sim_errors(atols, rtols, mean_abs_loglik_error, log=FALSE)
+plot_sim_errors(atols, rtols, max_abs_loglik_error, log=FALSE)
 ```
 
-# References
+# Computational challenges
+
+When performing Bayesian inference for the parameters $\theta$
+(and possible other model parameters, note that also $\textbf{y}_0$ can be a
+parameter) using MCMC methods, the system needs to be solved numerically on each log posterior probability evaluation. Furthermore, when using a gradient
+based MCMCM algorithm like Stan does, also _sensitivities_, i.e. 
+derivatives of the solution w.r.t. parameters, are needed. This is done
+in Stan by numerically solving an extended ODE system consisting of the
+sensitivities and the original dynamical variables. 
+
+The solution provided by a numerical method
+is always an approximation to the true solution. 
+This means that the computed posterior probability density and its
+gradient are also approximations and the whole MCMC inference is biased
+to some degree. So we are performing Bayesian inference for the parameters, the error in the solutions propagates also to the statistical properties of the posterior draws, in ways that cannot be predicted beforehand.
+
+How could this error be studied? If the model parameters are fixed,
+we can verify that the solution at all points is
+appropriately close to a more accurate reference solution. 
+There is a vast amount of classical literature that studies this error, and the ODE solvers built into
+Stan are these classical methods that obtain estimate their error and adapt
+their step size so that a given tolerance is achieved. However, we are doing statistics, and so we need to
+know that the solution is accurate enough across all relevant parts of
+parameter space. Additionally, it is not known beforehand where the 
+"relevant parts of parameter space" are!
+
+The problem of validating the use of a numerical method for a Bayesian model
+is therefore significantly more complicated than in the classical numerical
+analysis world. One idea is to run sampling repeatedly, gradually increasing
+the solver accuracy, until the posterior inference
+results don't change anymore. But this might not
+be computationally very attractive. The numerical methods are often expensive
+and frequently become the limiting factors in whatever model they are involved in. Moreover, achieving more accuracy often comes with the cost of more
+computation time. Note however that there is no direct tradeoff.
+
+These two problems (computational cost and potential unreliability) occur also
+with any other type of model that requires numerically solving an implicitly defined function or variable, but in this case study we focus on ODEs.
+
+The point of this case study is to show how by adding one
+additional tool, namely Pareto-Smoothed Importance Sampling (PSIS) [@yao2018;
+@vehtari2019], we can solve this problem.
+
+
+## Simpler numerical methods
+Simplest numerical methods for integrating ODEs usually involve some
+discretization in time, which affects the solver accuracy. Denser 
+discretization means more accuracy but also more computation, as more time
+steps need to be taken.
+
+The simplest things we might do to speed up our calculations are lowering
+the timestep, coarsening the discretization, or increasing the tolerance of the
+solvers. That immediately leaves us with the question, is this okay? Has
+changing the numerical method affected our parameter inference results? Was our
+original method giving correct inference results to begin with? Are the default
+tolerances in Stan suitable for the problem at hand?
+
+# Workflow
+
+Let $M$ be the model for which we would like to perform inference, but which we
+cannot evaluate since the likelihood is defined implicitly through an
+ODE or PDE system that is not analytically tractable. MCMC inference for $M$
+can be seen actually as inference for another model $M_{high}$, which
+is the same model as $M$ but using a numerical solver, and can therefore be
+evaluated.
+
+Our workflow addresses the problem of defining the high-precision numerical
+method in $M_{high}$ so that $M_{high}$ can trusted to have essentially the
+same posterior as $M$. We define a way to perform inference for $M_{high}$ 
+without needing to compute gradients or HMC trajectories for it. This involves
+another model $M_{low}$, which is again the same model, except that $M_{low}$
+uses a cheaper and less accurate numerical methods (or just looser tolerances
+and/or coarser discretization) to compute the required ODE or PDE solutions,
+and is therefore faster to fit. The posterior densities are denoted $p_{low}$
+and $p_{high}$, respectively.
+
+To understand how PSIS comes into play, we must first discuss importance
+sampling. If we want to compute expectations with the high precision model, we
+can take draws from the low precision models and reweight these according to the
+importance weights $\frac{p_{high}}{p_{low}}$. If these models are too
+different, then the reweighting will produce noisy estimates that are not
+useful. PSIS and particularly the Pareto $k$-diagnostic (denoted $\hat{k}$), is
+the tool that tells us when we can or cannot rely on the importance weights. If
+$\hat{k} < 0.5$ we are safe to do the importance sampling, if $\hat{k} < 0.7$
+the importance sampling will start to converge more slowly, and if
+$\hat{k} > 0.7$ the importance sampling estimates are unreliable. For simplicity
+we will only consider the $\hat{k} < 0.5$ threshold.
+
+Ideally, $M_{high}$ would involve a numerical method that we can trust
+completely in all parts of the parameter space so that, as long as
+$\hat{k} < 0.5$, importance weights can be used to reweight the low precision
+approximation $p_{low}$ to the high precision approximation $p_{high}$. We can
+think of $M_{high}$ as a reference model, because it is the baseline to which
+we compare. It is difficult in practice to know if a given model is a good
+reference model in all parts of parameter space, due to curse of dimensionality
+and the fact that analysed system can have different properties in different
+parts of the parameter space. For example, ODEs can qualitatively change their
+behaviour as a function of parameters (bifurcation), or become stiff or
+chaotic in some parameter regions. Accuracy can be checked at a given set of
+parameters fairly easily, but not over a high dimensional parameter space.
+Under these conditions it is necessary to compromise to develop a reference
+model that works only over a range of parameter space, but even then it is hard
+to know *a priori* what range that is.
+
+We propose the following workflow:
+
+::: {#workflow .box}
+1. Generate draws from $p_{low}$.
+2. Tune the numerical method in $M_{high}$ so that it is reliable at
+these draws. All application specific knowledge and classical numerical
+analysis can be used here.
+3. Compute importance weights $\frac{p_{high}}{p_{low}}$
+4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
+the numerical method in $M_{low}$ and go back to step 1.
+5. Resample draws of $M_{low}$, using importance weights to get draws from
+$M_{high}$, and therefore essentially draws from $M$.
+:::
+
+The next two sections of this case study outline how to apply this workflow to
+do fast but reliable inference for
+
+1. an ODE model using a built-in Stan solver
+2. a PDE model using a custom solver that does not have explicit tolerance
+controls
+
+The importance sampling diagnostics are handled with the
+[`loo`](https://mc-stan.org/loo) package and the resampling is handled with the
+[`posterior`](https://github.com/stan-dev/posterior) package.
+
+
+## Example: SIR fitting
+The parameters $\beta$ and $\gamma$
+will be estimated from time series observations of the number of infected
+people (I). For the purposes of this case study, the goal is to use a very low
+precision ODE solver to do inference and then check it afterwards against
+a high precision solver. This is useful in practice if sampling with the
+high precision solver itself would take an inordinate amount of time.
+
+```{r print_posterior_model}
+sir_models$posterior
+```
+
+We sample the model and extract posterior draws of the parameters.
+
+### 1. Generate draws from $p_{low}$.
+
+```{r sample_posterior, message=FALSE}
+solver_args_sample <- list(
+  abs_tol = 1e-6,
+  rel_tol = 1e-6,
+  max_num_steps=1e9
+)
+posterior_fit <- sample_posterior(sir_models$posterior, data_list, 
+                                  solver_args_sample, stan_opts, refresh=1000) 
+```
+
+```{r print_post}
+print(posterior_fit)
+posterior_draws <- posterior_fit$draws(c("beta", "gamma", "phi_inv"))
+```
+
+These draws will be passed again to `sir_models$sim`
+
+```{r sir_sim_posterior, message=FALSE}
+# Simulate and plot generated solutions
+posterior_sim <- simulate(sir_models$sim, posterior_draws, data_list,
+                          solver_args_sample, stan_opts)
+
+title <- "Solutions using posterior param draws"
+plot_sir_example_solutions(posterior_sim, data_list, thin=10, main=title)
+```
+
+```{r sir_sim_posterior_check, message=FALSE}
+solver_args_check <- list(
+  ATOL = 1e-10,
+  RTOL = 1e-10,
+  MAX_NUM_STEPS=1e12
+)
+posterior_sim_check <- simulate(sir_models$sim, posterior_draws, data_list,
+                                solver_args_check, sample)
+
+print(posterior_sim_check$output(1))
+print(posterior_sim_check$output(2))
+print(posterior_sim_check$output(3))
+print(posterior_sim_check$output(4))
+print(rcc)
+```
+
+2. Tune the numerical method in $M_{high}$ so that it is reliable at
+these draws. All application specific knowledge and classical numerical
+analysis can be used here.
+3. Compute importance weights $\frac{p_{high}}{p_{low}}$
+4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
+the numerical method in $M_{low}$ and go back to step 1.
+5. Resample draws of $M_{low}$, using importance weights to get draws from
+$M_{high}$, and therefore essentially draws from $M$.
+
+# Warning messages
+
+During posterior sampling, it is typical that the following 
+```{messages_header}
+## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:
+```
+occurs multiple times, followed by one of these
+```{messages_content}
+## Chain 1 Exception: ode_rk45_tol: ode parameters and data[1] is inf, but must be finite! (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 50, column 2 to line 51, column 49)
+
+## Chain 1 Exception: neg_binomial_2_lpmf: Location parameter is nan, but must be positive finite! (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 54, column 4 to column 55)
+
+## Chain 2 Exception: ode_rk45_tol:  Failed to integrate to next output time (1) in less than max_num_steps steps (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 50, column 2 to line 51, column 49)
+```
+messages.
+
+## References

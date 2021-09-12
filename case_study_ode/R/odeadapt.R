@@ -69,66 +69,85 @@ create_cmdstan_models <- function(funs, data, tdata, obsdata, pars,
   models <- list()
   for (code in codes) {
     j <- j + 1
-    models[[j]] <- cmdstan_model(write_stan_file(code))
+    models[[j]] <- cmdstanr::cmdstan_model(cmdstanr::write_stan_file(code))
   }
   names(models) <- names(codes)
   return(models)
 }
 
-# Print solver argument info
-cat_sa <- function(sa) {
-  msg <- paste0(
-    "* RTOL=", sa$RTOL, ", ATOL=", sa$ATOL, ", MAX_NUM_STEPS=",
-    sa$MAX_NUM_STEPS, "\n"
-  )
-  cat(msg)
+# Validate solver arguments
+check_sa <- function(solver_args) {
+  MAX_INT <- 2^31 - 1
+  required <- c("rel_tol", "abs_tol", "max_num_steps")
+  checkmate::assert_names(solver_args, permutation.of = required)
+  checkmate::assertNumeric(solver_args$rel_tol, lower = 0)
+  checkmate::assertNumeric(solver_args$abs_tol, lower = 0)
+  checkmate::assertIntegerish(solver_args$max_num_steps, lower = 1, upper = MAX_INT)
+  TRUE
 }
 
+# Print output if running Stan model failed
+print_output_if_failed <- function(stan_out) {
+  codes <- stan_out$return_codes()
+  idx_failed <- which(codes > 0)
+  for (idx in idx_failed) {
+    cat("Chain ", idx, ", failed, priting its output:\n", sep = "")
+    print(stan_out$output(idx))
+  }
+  if (length(idx_failed == 0)) {
+    cat("All chains were successful.\n")
+  }
+}
+
+
 # Function for simulating ODE solutions and data given parameter( draws)s
-simulate <- function(model, params, data, stan_opts, solver_args = list()) {
+simulate <- function(model, params, data, solver_args, stan_opts) {
   stopifnot(is(model, "CmdStanModel"))
   stopifnot(is(params, "draws"))
   stopifnot(is(data, "list"))
   stopifnot(is(solver_args, "list"))
-  if (is.null(solver_args$RTOL)) solver_args$RTOL <- 1e-6 # default
-  if (is.null(solver_args$ATOL)) solver_args$ATOL <- 1e-6 # default
-  if (is.null(solver_args$MAX_NUM_STEPS)) solver_args$MAX_NUM_STEPS <- 1e6 # def
-  cat_sa(solver_args)
-  model$generate_quantities(
+  check_sa(solver_args)
+  out <- model$generate_quantities(
     data = c(data, solver_args),
     fitted_params = params,
     seed = stan_opts$seed,
     sig_figs = stan_opts$sig_figs
   )
+  print_output_if_failed(out)
+  return(out)
 }
 
 # Using simulate with different tolerances
 simulate_many <- function(model, params, data, stan_opts,
-                          atol, rtol, MAX_NUM_STEPS = NULL) {
+                          atol, rtol, max_num_steps) {
   stopifnot(is(params, "draws"))
   J1 <- length(atol)
   J2 <- length(rtol)
-  S <- niterations(params) * nchains(params)
+  S <- posterior::niterations(params) * posterior::nchains(params)
   TIME <- array(0, dim = c(J1, J2))
   XSIM <- array(0, dim = c(J1, J2, S, data$N * data$D))
   LL <- array(0, dim = c(J1, J2, S))
   for (j1 in 1:J1) {
     for (j2 in 1:J2) {
       solver_args <- list(
-        ATOL = atol[j1],
-        RTOL = rtol[j2],
-        MAX_NUM_STEPS = MAX_NUM_STEPS
+        abs_tol = atol[j1],
+        rel_tol = rtol[j2],
+        max_num_steps = max_num_steps
       )
       tryCatch(
         expr = {
           sim <- simulate(model, params, data, stan_opts, solver_args)
-          XSIM[j1, j2, , ] <- merge_chains(sim$draws("x"))[, 1, , drop = TRUE]
+          XSIM[j1, j2, , ] <- posterior::merge_chains(
+            sim$draws("x")
+          )[, 1, , drop = TRUE]
           TIME[j1, j2] <- sim$time()$total
-          LL[j1, j2, ] <- merge_chains(sim$draws("log_lik"))[, 1, 1, drop = TRUE]
+          LL[j1, j2, ] <- posterior::merge_chains(
+            sim$draws("log_lik")
+          )[, 1, 1, drop = TRUE]
         },
         error = function(e) {
           message(
-            "Caught an error in simulate! Likely MAX_NUM_STEPS was too",
+            "Caught an error in simulate! Likely max_num_steps was too",
             " low or negative solution was obtained so likelihood could",
             " not be computed!"
           )
@@ -138,6 +157,22 @@ simulate_many <- function(model, params, data, stan_opts,
     }
   }
   return(list(times = TIME, sims = XSIM, log_liks = LL))
+}
+
+# Function for posterior sampling
+sample_posterior <- function(model, data, solver_args, stan_opts, ...) {
+  stopifnot(is(model, "CmdStanModel"))
+  stopifnot(is(data, "list"))
+  stopifnot(is(solver_args, "list"))
+  check_sa(solver_args)
+  fit <- model$sample(
+    data = c(data, solver_args),
+    sig_figs = stan_opts$sig_figs,
+    seed = stan_opts$seed,
+    ...
+  )
+  print_output_if_failed(fit)
+  return(fit)
 }
 
 # Compute error to most accurate solution
