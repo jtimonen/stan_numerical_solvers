@@ -36,6 +36,9 @@ stan_opts <- list(
   seed = 123,
   sig_figs = 18
 )
+
+# R functions
+source("odeadapt.R")
 ```
 
 # Introduction
@@ -166,7 +169,6 @@ data_list$D <- 3
 
 We create and compile three Stan models.
 ```{r sir_compile, message=FALSE}
-source("R/odeadapt.R")
 sir_models <- create_cmdstan_models(sir_funs, sir_data, sir_tdata, sir_obsdata,
                                     sir_pars, sir_tpars,
                                     sir_prior, sir_odesolve, 
@@ -208,7 +210,7 @@ some values and plot the obtained ODE solutions.
 default_solver_args <- list(
   rel_tol = 1e-6,
   abs_tol = 1e-6,
-  max_num_steps = 1e9
+  max_num_steps = 1e6
 )
 # Simulate solutions using prior draws
 prior_sim <- simulate(sir_models$sim, prior_draws, data_list, 
@@ -433,6 +435,7 @@ posterior_fit <- sample_posterior(sir_models$posterior, data_list,
 ```
 
 ```{r print_post}
+print(posterior_fit$time())
 print(posterior_fit)
 posterior_draws <- posterior_fit$draws(c("beta", "gamma", "phi_inv"))
 ```
@@ -456,12 +459,6 @@ solver_args_check <- list(
 )
 posterior_sim_check <- simulate(sir_models$sim, posterior_draws, data_list,
                                 solver_args_check, sample)
-
-print(posterior_sim_check$output(1))
-print(posterior_sim_check$output(2))
-print(posterior_sim_check$output(3))
-print(posterior_sim_check$output(4))
-print(rcc)
 ```
 
 2. Tune the numerical method in $M_{high}$ so that it is reliable at

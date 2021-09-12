@@ -1,3 +1,32 @@
+# UTILS -------------------------------------------------------------------
+
+# Validate solver arguments
+check_sa <- function(solver_args) {
+  MAX_INT <- 2^31 - 1
+  required <- c("rel_tol", "abs_tol", "max_num_steps")
+  checkmate::assert_names(names(solver_args), permutation.of = required)
+  checkmate::assertNumeric(solver_args$rel_tol, lower = 0)
+  checkmate::assertNumeric(solver_args$abs_tol, lower = 0)
+  checkmate::assertIntegerish(solver_args$max_num_steps, lower = 1, upper = MAX_INT)
+  TRUE
+}
+
+# Print output if running Stan model failed
+print_output_if_failed <- function(stan_out) {
+  codes <- stan_out$return_codes()
+  idx_failed <- which(codes > 0)
+  for (idx in idx_failed) {
+    cat("Chain ", idx, ", failed, priting its output:\n", sep = "")
+    print(stan_out$output(idx))
+  }
+  if (length(idx_failed == 0)) {
+    cat("All chains were successful.\n")
+  }
+}
+
+
+# CREATING STAN MODELS ------------------------------------------------------
+
 # Create a block of Stan code
 stan_block <- function(block_name, block_code) {
   block_name <- trimws(tolower(block_name))
@@ -75,30 +104,8 @@ create_cmdstan_models <- function(funs, data, tdata, obsdata, pars,
   return(models)
 }
 
-# Validate solver arguments
-check_sa <- function(solver_args) {
-  MAX_INT <- 2^31 - 1
-  required <- c("rel_tol", "abs_tol", "max_num_steps")
-  checkmate::assert_names(solver_args, permutation.of = required)
-  checkmate::assertNumeric(solver_args$rel_tol, lower = 0)
-  checkmate::assertNumeric(solver_args$abs_tol, lower = 0)
-  checkmate::assertIntegerish(solver_args$max_num_steps, lower = 1, upper = MAX_INT)
-  TRUE
-}
 
-# Print output if running Stan model failed
-print_output_if_failed <- function(stan_out) {
-  codes <- stan_out$return_codes()
-  idx_failed <- which(codes > 0)
-  for (idx in idx_failed) {
-    cat("Chain ", idx, ", failed, priting its output:\n", sep = "")
-    print(stan_out$output(idx))
-  }
-  if (length(idx_failed == 0)) {
-    cat("All chains were successful.\n")
-  }
-}
-
+# RUNNING CMDSTAN -----------------------------------------------------
 
 # Function for simulating ODE solutions and data given parameter( draws)s
 simulate <- function(model, params, data, solver_args, stan_opts) {
@@ -136,7 +143,7 @@ simulate_many <- function(model, params, data, stan_opts,
       )
       tryCatch(
         expr = {
-          sim <- simulate(model, params, data, stan_opts, solver_args)
+          sim <- simulate(model, params, data, solver_args, stan_opts)
           XSIM[j1, j2, , ] <- posterior::merge_chains(
             sim$draws("x")
           )[, 1, , drop = TRUE]
@@ -175,6 +182,9 @@ sample_posterior <- function(model, data, solver_args, stan_opts, ...) {
   return(fit)
 }
 
+
+# COMPUTING ERRORS --------------------------------------------------------
+
 # Compute error to most accurate solution
 compute_sol_errors <- function(XSIM, fun = "max") {
   J1 <- dim(XSIM)[1]
@@ -206,6 +216,9 @@ compute_loglik_errors <- function(LL, fun = "max") {
   }
   return(ERR)
 }
+
+
+# PLOTTING ----------------------------------------------------------------
 
 # Runtimes plot
 plot_sim_times <- function(atol, rtol, TIME) {
