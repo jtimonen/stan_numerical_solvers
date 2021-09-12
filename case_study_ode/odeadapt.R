@@ -185,17 +185,22 @@ sample_posterior <- function(model, data, solver_args, stan_opts, ...) {
 
 # COMPUTING ERRORS --------------------------------------------------------
 
+# Compute error in x compared to x_ref
+compute_sol_error <- function(x, x_ref, fun) {
+  abs_errors <- abs(as.vector(x_ref) - as.vector(x))
+  eval(call(fun, abs_errors))
+}
+
 # Compute error to most accurate solution
 compute_sol_errors <- function(XSIM, fun = "max") {
   J1 <- dim(XSIM)[1]
   J2 <- dim(XSIM)[2]
   ERR <- array(0, dim = c(J1, J2))
-  I_sim_best <- XSIM[1, 1, , ]
+  x_ref <- XSIM[1, 1, , ]
   for (j1 in 1:J1) {
     for (j2 in 1:J2) {
-      I_sim <- XSIM[j1, j2, , ]
-      abs_errors <- abs(as.vector(I_sim_best) - as.vector(I_sim))
-      ERR[j1, j2] <- eval(call(fun, abs_errors))
+      x <- XSIM[j1, j2, , ]
+      ERR[j1, j2] <- compute_sol_error(x, x_ref, fun)
     }
   }
   return(ERR)
@@ -238,34 +243,76 @@ use_psis <- function(fit_high, fit_low) {
   loo::psis(x, r_eff = r_eff)
 }
 
+
+# TUNING THE SOLVER -------------------------------------------------------
+
+tune_solver <- function(tols, model, params, data, stan_opts,
+                        max_num_steps, err_tol) {
+  error_to_ref <- Inf
+  x_ref <- NULL
+  TIMES <- c()
+  ERR <- c()
+  idx <- 0
+  for (TOL in tols) {
+    idx <- idx + 1
+    cat("* simulating with abs_tol = rel_tol = ", TOL, "\n", sep = "")
+    sargs <- list(
+      abs_tol = TOL,
+      rel_tol = TOL,
+      max_num_steps = max_num_steps
+    )
+    sim <- simulate(model, params, data, sargs, stan_opts)
+    x <- posterior::merge_chains(sim$draws("x"))[, 1, , drop = TRUE]
+    TIMES <- c(TIMES, sim$time()$total)
+    if (is.null(x_ref)) {
+      x_ref <- x
+    }
+    err <- compute_sol_error(x, x_ref, "max")
+    ERR <- c(ERR, err)
+    if (idx > 1 && err < err_tol) {
+      return(list(
+        tols = tols[1:idx], errors = ERR, times = TIMES, last_sim
+        = sim, last_tol = tols[idx]
+      ))
+    }
+    x_ref <- x
+  }
+  warning("err_tol was not reached")
+  list(
+    tols = tols[1:idx], errors = ERR, times = TIMES, last_sim = sim,
+    last_tol = tols[idx]
+  )
+}
+
+
 # PLOTTING ----------------------------------------------------------------
 
 # Runtimes plot
-plot_sim_times <- function(atol, rtol, TIME) {
+plot_sim_times <- function(abs_tol, rel_tol, TIME) {
   par(mfrow = c(1, 2))
-  plot(log10(rtol), diag(TIME),
+  plot(log10(rel_tol), diag(TIME),
     xlab = "log10(tol)", ylab = "time (s)",
     type = "o", pch = 16
   )
   grid()
-  image(log10(atol), log10(rtol), TIME, main = "time (s)")
+  image(log10(abs_tol), log10(rel_tol), TIME, main = "time (s)")
 }
 
 
 # Errors plot
-plot_sim_errors <- function(atol, rtol, ERR, log = TRUE) {
+plot_sim_errors <- function(abs_tol, rel_tol, ERR, log = TRUE) {
   main <- deparse(substitute(ERR))
   if (log) {
     ERR <- log(ERR)
     main <- paste0("log(", main, ")")
   }
   par(mfrow = c(1, 2))
-  plot(log10(rtol), diag(ERR),
+  plot(log10(rel_tol), diag(ERR),
     xlab = "log10(tol)", ylab = main,
     type = "o", pch = 16
   )
   grid()
-  image(log10(atol), log10(rtol), ERR, main = main)
+  image(log10(abs_tol), log10(rel_tol), ERR, main = main)
 }
 
 # Function that plots SIR solutions against data (of infected)
