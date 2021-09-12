@@ -417,7 +417,8 @@ solver_args_sample <- list(
   max_num_steps=1e6
 )
 posterior_fit <- sample_posterior(sir_models$posterior, data_list, 
-                                  solver_args_sample, stan_opts, refresh=1000) 
+                                  solver_args_sample, stan_opts, refresh=1000,
+                                  init=0)
 ```
 
 ```{r print_post}
@@ -439,12 +440,12 @@ plot_sir_example_solutions(posterior_sim, data_list, thin=10, main=title)
 
 ```{r sir_sim_posterior_check, message=FALSE}
 solver_args_check <- list(
-  ATOL = 1e-10,
-  RTOL = 1e-10,
-  MAX_NUM_STEPS=1e12
+  abs_tol = 1e-10,
+  rel_tol = 1e-10,
+  max_num_steps=1e9
 )
 posterior_sim_check <- simulate(sir_models$sim, posterior_draws, data_list,
-                                solver_args_check, sample)
+                                solver_args_check, stan_opts)
 ```
 
 2. Tune the numerical method in $M_{high}$ so that it is reliable at
