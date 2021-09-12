@@ -408,7 +408,7 @@ sir_models$posterior
 
 We sample the model and extract posterior draws of the parameters.
 
-### 1. Generate draws from $p_{low}$.
+### Step 1. Generate draws from $p_{low}$.
 
 ```{r sample_posterior, message=FALSE}
 solver_args_sample <- list(
@@ -438,38 +438,51 @@ title <- "Solutions using posterior param draws"
 plot_sir_example_solutions(posterior_sim, data_list, thin=10, main=title)
 ```
 
-```{r sir_sim_posterior_check, message=FALSE}
-solver_args_check <- list(
+### Step 2. Tune the numerical method in $M_{high}$ so that it is reliable at these draws.
+
+```{r sim_posterior_high, message=FALSE}
+solver_args_high <- list(
   abs_tol = 1e-10,
   rel_tol = 1e-10,
   max_num_steps=1e9
 )
-posterior_sim_check <- simulate(sir_models$sim, posterior_draws, data_list,
-                                solver_args_check, stan_opts)
+posterior_sim_high <- simulate(sir_models$sim, posterior_draws, data_list,
+                               solver_args_high, stan_opts)
 ```
 
-2. Tune the numerical method in $M_{high}$ so that it is reliable at
-these draws. All application specific knowledge and classical numerical
-analysis can be used here.
-3. Compute importance weights $\frac{p_{high}}{p_{low}}$
-4. Compute the $\hat{k}$ diagnostic. If $\hat{k} > 0.5$, raise precision of
-the numerical method in $M_{low}$ and go back to step 1.
-5. Resample draws of $M_{low}$, using importance weights to get draws from
-$M_{high}$, and therefore essentially draws from $M$.
+
+
+### Steps 3-4. Compute importance weights and Pareto-$k$
+
+```{r importance_weights}
+is <- use_psis(posterior_sim, posterior_sim_high)
+print(is)
+print(is$diagnostics$pareto_k)
+```
+
+
+### Step 5. Importance resampling
+```{r resampling}
+posterior_draws_resampled <- posterior::resample_draws(posterior_draws,
+                                                       weights=is$log_weights)
+
+print(posterior_draws)
+```
+
 
 # Warning messages
 
 During posterior sampling, it is typical that the following 
-```{messages_header}
-## Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:
+```{r messages_header}
+## Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:
 ```
 occurs multiple times, followed by one of these
-```{messages_content}
-## Chain 1 Exception: ode_rk45_tol: ode parameters and data[1] is inf, but must be finite! (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 50, column 2 to line 51, column 49)
+```{r messages_content}
+## Exception: ode_rk45_tol: ode parameters and data[1] is inf, but must be finite! 
 
-## Chain 1 Exception: neg_binomial_2_lpmf: Location parameter is nan, but must be positive finite! (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 54, column 4 to column 55)
+## Exception: neg_binomial_2_lpmf: Location parameter is nan, but must be positive finite!
 
-## Chain 2 Exception: ode_rk45_tol:  Failed to integrate to next output time (1) in less than max_num_steps steps (in '/var/folders/cj/c_w12skd6mj6x942dt2twtp40000gn/T/RtmpPBWP3g/model-13ef24959208c.stan', line 50, column 2 to line 51, column 49)
+## Exception: ode_rk45_tol:  Failed to integrate to next output time (1) in less than max_num_steps steps
 ```
 messages.
 

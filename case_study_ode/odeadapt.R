@@ -218,6 +218,26 @@ compute_loglik_errors <- function(LL, fun = "max") {
 }
 
 
+# COMPUTING PARETO_K --------------------------------------------------------
+
+# Compute log importance weights
+log_importance_weights <- function(fit_high, fit_low) {
+  stopifnot(is(fit_high, "CmdStanFit"))
+  stopifnot(is(fit_low, "CmdStanFit"))
+  LL_high <- fit_high$draws("log_lik")[, , 1, drop = TRUE]
+  LL_low <- fit_low$draws("log_lik")[, , 1, drop = TRUE]
+  return(LL_high - LL_low)
+}
+
+# Compute importance weights and pareto k diagnostic
+use_psis <- function(fit_high, fit_low) {
+  log_ratios <- log_importance_weights(fit_high, fit_low)
+  chain_id <- rep(1:ncol(log_ratios), each = nrow(log_ratios))
+  x <- as.vector(exp(-log_ratios))
+  r_eff <- loo::relative_eff(x, chain_id)
+  loo::psis(x, r_eff = r_eff)
+}
+
 # PLOTTING ----------------------------------------------------------------
 
 # Runtimes plot
