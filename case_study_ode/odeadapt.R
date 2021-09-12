@@ -247,3 +247,19 @@ plot_sim_errors <- function(atol, rtol, ERR, log = TRUE) {
   grid()
   image(log10(atol), log10(rtol), ERR, main = main)
 }
+
+# Function that plots SIR solutions against data (of infected)
+plot_sir_example_solutions <- function(sim, data, thin = 1, main = "") {
+  x_sim <- posterior::thin_draws(posterior::merge_chains(sim$draws("x")), thin)
+  I_sim <- x_sim[, 1, (N + 1):(2 * N), drop = TRUE]
+  plot(data$t, rep(data$pop_size, data$N),
+    type = "l", lty = 2,
+    col = "gray70", ylim = c(0, 800), ylab = "Infected", xlab = "Day",
+    main = main
+  )
+  for (i_draw in 1:nrow(I_sim)) {
+    I <- as.vector(I_sim[i_draw, ])
+    lines(data$t, I, col = scales::alpha("firebrick", 0.1))
+  }
+  points(data$t, data$I_data, ylim = c(0, 1000), pch = 20)
+}

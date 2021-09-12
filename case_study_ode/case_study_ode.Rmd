@@ -207,30 +207,16 @@ about the meaning of the
 some values and plot the obtained ODE solutions.
 
 ```{r sir_sim_model, message=FALSE}
-default_solver_args <- list(
+solver_args_default <- list(
   rel_tol = 1e-6,
   abs_tol = 1e-6,
   max_num_steps = 1e6
 )
 # Simulate solutions using prior draws
 prior_sim <- simulate(sir_models$sim, prior_draws, data_list, 
-                      default_solver_args, stan_opts)
+                      solver_args_default, stan_opts)
 
-# Function that plots solutions against data
-plot_sir_example_solutions <- function(sim, data, thin=1, main="") {
-  x_sim <- thin_draws(merge_chains(sim$draws("x")), thin)
-  I_sim <- x_sim[,1,(N+1):(2*N), drop=TRUE]
-  plot(data$t, rep(data$pop_size, data$N), type="l", lty=2,
-       col="gray70", ylim=c(0,800), ylab="Infected", xlab="Day",
-       main = main)
-  for(i_draw in 1:nrow(I_sim)) {
-    I <- as.vector(I_sim[i_draw, ])
-    lines(data$t, I, col=alpha("firebrick", 0.1))
-  }
-  points(data$t, data$I_data, ylim = c(0, 1000), pch=20)
-}
-
-# Call the above function
+# Plot solutions
 title <- "Solutions using prior param draws"
 plot_sir_example_solutions(prior_sim, data_list, thin=10, main=title)
 ```
@@ -250,7 +236,7 @@ TOLS <- 10^seq(-8,-4) # 10^seq(-14,-3)
 atols <- TOLS
 rtols <- TOLS
 sims <- simulate_many(sir_models$sim, prior_draws, data_list, stan_opts,
-                      atols, rtols, default_solver_args$max_num_steps)
+                      atols, rtols, solver_args_default$max_num_steps)
 ```
 
 We plot the simulation runtime for each case.
@@ -426,9 +412,9 @@ We sample the model and extract posterior draws of the parameters.
 
 ```{r sample_posterior, message=FALSE}
 solver_args_sample <- list(
-  abs_tol = 1e-6,
-  rel_tol = 1e-6,
-  max_num_steps=1e9
+  abs_tol = 1e-4,
+  rel_tol = 1e-4,
+  max_num_steps=1e6
 )
 posterior_fit <- sample_posterior(sir_models$posterior, data_list, 
                                   solver_args_sample, stan_opts, refresh=1000) 
